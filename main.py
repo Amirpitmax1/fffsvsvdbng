@@ -450,8 +450,9 @@ async def ask_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("رمز تایید دو مرحله‌ای را وارد کنید:")
         return ASK_PASSWORD
     except PhoneCodeInvalid: 
-        await update.message.reply_text("کد اشتباه است. مجددا تلاش کنید.")
-        return ASK_CODE
+        await update.message.reply_text("کد اشتباه است. لطفا مجددا تلاش کنید.", reply_markup=await main_reply_keyboard(update.effective_user.id))
+        if client.is_connected: await client.disconnect()
+        return ConversationHandler.END
     except PhoneCodeExpired:
         await update.message.reply_text(
             "کد تایید منقضی شده است. لطفا فرآیند فعال‌سازی را دوباره از ابتدا شروع کنید.",
@@ -459,9 +460,16 @@ async def ask_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         if client.is_connected: await client.disconnect()
         return ConversationHandler.END
+    except (ApiIdInvalid, PasswordHashInvalid):
+        await update.message.reply_text(
+            "خطا: `API_ID` یا `API_HASH` نامعتبر است. لطفا مقادیر را در تنظیمات ربات بررسی کنید.",
+            reply_markup=await main_reply_keyboard(update.effective_user.id)
+        )
+        if client.is_connected: await client.disconnect()
+        return ConversationHandler.END
     except Exception as e:
         logger.error(f"Error on sign in: {e}")
-        await update.message.reply_text("خطا!", reply_markup=await main_reply_keyboard(update.effective_user.id))
+        await update.message.reply_text(f"یک خطای پیش‌بینی نشده رخ داد: {e}", reply_markup=await main_reply_keyboard(update.effective_user.id))
         if client.is_connected: await client.disconnect()
         return ConversationHandler.END
 
