@@ -65,11 +65,10 @@ def run_flask():
     web_app.run(host="0.0.0.0", port=port)
 
 # --- تنظیمات اولیه و متغیرها ---
-# مقادیر زیر باید در بخش Environment Variables در Render تنظیم شوند
-TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "8493268938:AAE9hgHlgZUMNND0EyEZ5X44_M8NiWyU9q4")
-API_ID = int(os.environ.get("API_ID", "9536480"))
-API_HASH = os.environ.get("API_HASH", "4e52f6f12c47a0da918009260b6e3d44") # اصلاح اشتباه تایپی
-OWNER_ID = int(os.environ.get("OWNER_ID", "7423552124"))
+TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
+API_ID = int(os.environ.get("API_ID"))
+API_HASH = os.environ.get("API_HASH")
+OWNER_ID = int(os.environ.get("OWNER_ID"))
 
 # مسیر دیتابیس و فایل قفل در دیسک پایدار Render
 DATA_PATH = os.environ.get("RENDER_DISK_PATH", "data")
@@ -77,55 +76,28 @@ DB_PATH = os.path.join(DATA_PATH, "bot_database.db")
 SESSION_PATH = DATA_PATH
 LOCK_FILE_PATH = os.path.join(DATA_PATH, "bot.lock")
 
-
 os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
 
 # --- مراحل ConversationHandler ---
-# مراحل خرید
 (
-    ASK_DIAMOND_AMOUNT,
-    AWAIT_RECEIPT
-) = range(2)
-
-# مراحل Self Pro
-(
-    ASK_PHONE_CONTACT,
-    ASK_CODE,
-    ASK_PASSWORD
-) = range(2, 5)
-
-# مراحل پنل ادمین
-(
-    ADMIN_PANEL_MAIN,
-    SETTING_PRICE,
-    SETTING_INITIAL_BALANCE,
-    SETTING_SELF_COST,
-    SETTING_CHANNEL_LINK,
-    SETTING_REFERRAL_REWARD,
-    SETTING_PAYMENT_CARD,
-    ADMIN_ADD,
-    ADMIN_REMOVE
-) = range(5, 14)
+    ASK_DIAMOND_AMOUNT, AWAIT_RECEIPT,
+    ASK_PHONE_CONTACT, ASK_CODE, ASK_PASSWORD,
+    ADMIN_PANEL_MAIN, SETTING_PRICE, SETTING_INITIAL_BALANCE,
+    SETTING_SELF_COST, SETTING_CHANNEL_LINK, SETTING_REFERRAL_REWARD,
+    SETTING_PAYMENT_CARD, ADMIN_ADD, ADMIN_REMOVE,
+    AWAITING_SUPPORT_MESSAGE, AWAITING_ADMIN_REPLY
+) = range(16)
 
 # --- استایل‌های فونت ---
 FONT_STYLES = {
-    'normal': "0123456789",
-    'monospace': "𝟶𝟷𝟸𝟹𝟺𝟻𝟼𝟽𝟾𝟿",
-    'doublestruck': "𝟘𝟙𝟚𝟛𝟜𝟝𝟞𝟟𝟠𝟡",
-    'stylized': "𝟢𝟣𝟤𝟥𝟦𝟧𝟨𝟩𝟪𝟫",
+    'normal': "0123456789", 'monospace': "𝟶𝟷𝟸𝟹𝟺𝟻𝟼𝟽𝟾𝟿",
+    'doublestruck': "𝟘𝟙𝟚𝟛𝟜𝟝𝟞𝟟𝟠𝟡", 'stylized': "𝟢𝟣𝟤𝟥𝟦𝟧𝟨𝟩𝟪𝟫",
     'cursive': "𝟎𝟏𝟐𝟑𝟒𝟓𝟔𝟕𝟖𝟗"
 }
 
 def stylize_time(time_str: str, style: str) -> str:
-    """تبدیل رشته زمان به استایل مورد نظر"""
-    if style not in FONT_STYLES:
-        style = 'normal'
-    
-    original_digits = "0123456789"
-    styled_digits = FONT_STYLES[style]
-    
-    translation_table = str.maketrans(original_digits, styled_digits)
-    return time_str.translate(translation_table)
+    if style not in FONT_STYLES: style = 'normal'
+    return time_str.translate(str.maketrans("0123456789", FONT_STYLES[style]))
 
 # --- مدیریت دیتابیس (SQLite) ---
 def db_connect():
@@ -137,23 +109,13 @@ def setup_database():
     con, cur = db_connect()
     cur.execute("""
         CREATE TABLE IF NOT EXISTS users (
-            user_id INTEGER PRIMARY KEY,
-            username TEXT,
-            balance INTEGER DEFAULT 0,
-            self_active BOOLEAN DEFAULT FALSE,
-            self_paused BOOLEAN DEFAULT FALSE,
-            phone_number TEXT,
-            font_style TEXT DEFAULT 'normal',
-            base_first_name TEXT,
+            user_id INTEGER PRIMARY KEY, username TEXT, balance INTEGER DEFAULT 0,
+            self_active BOOLEAN DEFAULT FALSE, self_paused BOOLEAN DEFAULT FALSE,
+            phone_number TEXT, font_style TEXT DEFAULT 'normal', base_first_name TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS settings (
-            key TEXT PRIMARY KEY,
-            value TEXT
-        )
-    """)
+    cur.execute("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)")
     cur.execute("CREATE TABLE IF NOT EXISTS admins (user_id INTEGER PRIMARY KEY)")
     cur.execute("""
         CREATE TABLE IF NOT EXISTS transactions (
@@ -168,7 +130,6 @@ def setup_database():
             PRIMARY KEY (referrer_id, referred_id)
         )
     """)
-
     default_settings = {
         "diamond_price": "500", "initial_balance": "10", "self_hourly_cost": "5",
         "referral_reward": "20", "payment_card": "شماره کارت خود را اینجا وارد کنید",
@@ -176,13 +137,9 @@ def setup_database():
     }
     for key, value in default_settings.items():
         cur.execute("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", (key, value))
-
     cur.execute("INSERT OR IGNORE INTO admins (user_id) VALUES (?)", (OWNER_ID,))
-    
-    # اطمینان از وجود ادمین اصلی در جدول کاربران و تنظیم موجودی پنج میلیون
     cur.execute("INSERT OR IGNORE INTO users (user_id) VALUES (?)", (OWNER_ID,))
     cur.execute("UPDATE users SET balance = 5000000 WHERE user_id = ?", (OWNER_ID,))
-
     con.commit()
     con.close()
     logger.info("Database setup complete.")
@@ -207,7 +164,6 @@ def get_user(user_id, username=None):
     user = cur.fetchone()
     if not user:
         initial_balance = int(get_setting("initial_balance"))
-        # ادمین‌ها موجودی اولیه متفاوت دارند
         balance = 5000000 if user_id == OWNER_ID else initial_balance
         cur.execute("INSERT INTO users (user_id, username, balance) VALUES (?, ?, ?)", (user_id, username, balance))
         con.commit()
@@ -241,29 +197,24 @@ def get_admins():
 
 def is_admin(user_id):
     return user_id in get_admins()
-    
-def get_user_handle(user: User):
-    if user.username:
-        return f"@{user.username}"
-    return user.full_name
 
+def get_user_handle(user: User):
+    return f"@{user.username}" if user.username else user.full_name
 
 # --- کیبوردهای ربات ---
 async def main_reply_keyboard(user_id):
-    keyboard = [
-        [KeyboardButton("💎 موجودی"), KeyboardButton("🚀 Self Pro")],
-    ]
-    
+    keyboard = [[KeyboardButton("💎 موجودی"), KeyboardButton("🚀 Self Pro")]]
     row_two = []
     if not is_admin(user_id):
         row_two.append(KeyboardButton("💰 افزایش موجودی"))
+        row_two.append(KeyboardButton("💬 پشتیبانی"))
     row_two.append(KeyboardButton("🎁 کسب جم رایگان"))
     keyboard.append(row_two)
-
     if is_admin(user_id):
         keyboard.append([KeyboardButton("👑 پنل ادمین")])
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
+# ... (بقیه توابع کیبوردها)
 async def admin_panel_keyboard():
     keyboard = [
         [InlineKeyboardButton("💎 تنظیم قیمت الماس", callback_data="admin_set_price")],
@@ -277,10 +228,8 @@ async def admin_panel_keyboard():
 
 async def self_pro_management_keyboard(user_id):
     user = get_user(user_id)
-    
     pause_text = "▶️ فعالسازی ساعت" if user['self_paused'] else "⏸️ توقف ساعت"
     pause_callback = "self_resume" if user['self_paused'] else "self_pause"
-
     keyboard = [
         [InlineKeyboardButton(pause_text, callback_data=pause_callback)],
         [InlineKeyboardButton("✏️ تغییر فونت", callback_data="change_font_menu")],
@@ -296,18 +245,17 @@ async def font_selection_keyboard(user_id):
         keyboard.append([InlineKeyboardButton(text, callback_data=f"set_font_{style}")])
     keyboard.append([InlineKeyboardButton("🔙 بازگشت", callback_data="back_to_self_menu")])
     return InlineKeyboardMarkup(keyboard)
-
 # --- دستورات اصلی ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user = update.effective_user
     get_user(user.id, user.username)
     await update.message.reply_text(
-        f"سلام {user.first_name}! به ربات Self Pro خوش آمدید. لطفا یک گزینه را انتخاب کنید:",
+        f"سلام {user.first_name}! به ربات Self Pro خوش آمدید.",
         reply_markup=await main_reply_keyboard(user.id),
     )
-    return ConversationHandler.END # End any previous conversations
+    return ConversationHandler.END
 
-# --- منطق خرید الماس ---
+# --- منطق خرید الماس (کامل) ---
 async def buy_diamond_start_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("تعداد الماسی که قصد خرید دارید را وارد کنید:")
     return ASK_DIAMOND_AMOUNT
@@ -315,25 +263,18 @@ async def buy_diamond_start_text(update: Update, context: ContextTypes.DEFAULT_T
 async def ask_diamond_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         amount = int(update.message.text)
+        if not 0 < amount <= 10000:
+            await update.message.reply_text("لطفا یک عدد بین ۱ تا ۱۰,۰۰۰ وارد کنید.")
+            return ASK_DIAMOND_AMOUNT
     except ValueError:
-        await update.message.reply_text("لطفا یک عدد صحیح و مثبت وارد کنید.")
+        await update.message.reply_text("لطفا یک عدد صحیح وارد کنید.")
         return ASK_DIAMOND_AMOUNT
-        
-    if amount <= 0:
-        await update.message.reply_text("لطفا یک عدد بزرگتر از صفر وارد کنید.")
-        return ASK_DIAMOND_AMOUNT
-        
-    if amount > 10000:
-        await update.message.reply_text("مقدار خرید جم باید کمتر یا مساوی ۱۰,۰۰۰ باشد. لطفا مقدار کمتری وارد کنید.")
-        return ASK_DIAMOND_AMOUNT
-
     diamond_price = int(get_setting("diamond_price"))
     total_cost = amount * diamond_price
     payment_card = get_setting("payment_card")
-    context.user_data['purchase_amount'] = amount
-    context.user_data['purchase_cost'] = total_cost
+    context.user_data.update({'purchase_amount': amount, 'purchase_cost': total_cost})
     text = (f"🧾 **پیش‌فاکتور خرید**\n\n💎 تعداد: {amount}\n💳 مبلغ: {total_cost:,} تومان\n\n"
-            f"لطفاً مبلغ را به شماره کارت زیر واریز و سپس عکس رسید را ارسال کنید:\n`{payment_card}`")
+            f"لطفاً مبلغ را به شماره کارت زیر واریز و سپس **عکس رسید** را ارسال کنید:\n`{payment_card}`")
     await update.message.reply_text(text, parse_mode=ParseMode.MARKDOWN)
     return AWAIT_RECEIPT
 
@@ -342,147 +283,106 @@ async def await_receipt(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("لطفا فقط عکس رسید را ارسال کنید.")
         return AWAIT_RECEIPT
     user = update.effective_user
-    receipt_file_id = update.message.photo[-1].file_id
     amount = context.user_data.get('purchase_amount', 0)
     cost = context.user_data.get('purchase_cost', 0)
-    if amount == 0:
-        await update.message.reply_text("خطا! فرآیند خرید را مجددا شروع کنید.")
-        return ConversationHandler.END
-
+    if amount == 0: return ConversationHandler.END
     con, cur = db_connect()
     cur.execute("INSERT INTO transactions (user_id, amount_diamonds, amount_toman, receipt_file_id) VALUES (?, ?, ?, ?)",
-                (user.id, amount, cost, receipt_file_id))
+                (user.id, amount, cost, update.message.photo[-1].file_id))
     transaction_id = cur.lastrowid
     con.commit()
     con.close()
-    await update.message.reply_text("رسید شما دریافت شد. لطفاً تا زمان تایید ادمین صبور باشید.")
-
-    caption = (f" رسید جدید برای تایید\n\nکاربر: @{user.username} ({user.id})\n"
+    await update.message.reply_text("✅ رسید شما دریافت شد. لطفاً تا زمان بررسی و تایید توسط ادمین صبور باشید.")
+    caption = (f" رسید جدید برای تایید\n\nکاربر: {get_user_handle(user)} (ID: `{user.id}`)\n"
                f"تعداد الماس: {amount}\nمبلغ: {cost:,} تومان")
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("✅ تایید", callback_data=f"approve_{transaction_id}"),
          InlineKeyboardButton("❌ رد", callback_data=f"reject_{transaction_id}")]])
     for admin_id in get_admins():
-        try: await context.bot.send_photo(chat_id=admin_id, photo=receipt_file_id, caption=caption, reply_markup=keyboard)
-        except Exception as e: logger.error(f"Failed to send receipt to admin {admin_id}: {e}")
+        try:
+            await context.bot.send_photo(admin_id, update.message.photo[-1].file_id, caption, reply_markup=keyboard, parse_mode=ParseMode.MARKDOWN)
+        except Exception as e:
+            logger.error(f"Failed to send receipt to admin {admin_id}: {e}")
     return ConversationHandler.END
 
 async def handle_transaction_approval(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query; await query.answer()
-    action, transaction_id = query.data.split("_"); transaction_id = int(transaction_id)
-    admin_id = query.from_user.id
+    query = update.callback_query
+    await query.answer()
+    action, transaction_id = query.data.split("_")
     con, cur = db_connect()
-    cur.execute("SELECT * FROM transactions WHERE id = ?", (transaction_id,)); tx = cur.fetchone()
-    if not tx: await query.edit_message_caption(caption="این تراکنش یافت نشد."); con.close(); return
-    if tx['status'] != 'pending':
-        await query.edit_message_caption(caption=f"این تراکنش قبلاً به وضعیت «{tx['status']}» تغییر یافته است."); con.close(); return
-
+    cur.execute("SELECT * FROM transactions WHERE id = ?", (transaction_id,))
+    tx = cur.fetchone()
+    con.close()
+    if not tx or tx['status'] != 'pending':
+        await query.edit_message_caption(caption="این تراکنش قبلاً پردازش شده است.")
+        return
     user_id, amount = tx['user_id'], tx['amount_diamonds']
     if action == "approve":
         update_user_balance(user_id, amount, add=True)
-        cur.execute("UPDATE transactions SET status = 'approved', approved_by = ? WHERE id = ?", (admin_id, transaction_id))
-        await query.edit_message_caption(caption=f"✅ تراکنش تایید شد.\n {amount} الماس به کاربر اضافه شد.")
-        try: await context.bot.send_message(user_id, f"خرید شما به تعداد {amount} الماس تایید شد.")
-        except Exception as e: logger.warning(f"Could not notify user {user_id}: {e}")
-    elif action == "reject":
-        cur.execute("UPDATE transactions SET status = 'rejected', approved_by = ? WHERE id = ?", (admin_id, transaction_id))
-        await query.edit_message_caption(caption="❌ تراکنش رد شد.")
-        try: await context.bot.send_message(user_id, "متاسفانه خرید شما رد شد.")
-        except Exception as e: logger.warning(f"Could not notify user {user_id}: {e}")
-    con.commit(); con.close()
+        new_status, user_message, admin_caption = 'approved', f"✅ درخواست شما تایید شد و {amount} الماس به حسابتان اضافه گردید.", f"✅ تراکنش تایید شد.\n {amount} الماس به کاربر اضافه شد."
+    else:
+        new_status, user_message, admin_caption = 'rejected', "❌ درخواست افزایش موجودی شما توسط ادمین رد شد.", "❌ تراکنش رد شد."
+    con, cur = db_connect()
+    cur.execute("UPDATE transactions SET status = ?, approved_by = ? WHERE id = ?", (new_status, query.from_user.id, transaction_id))
+    con.commit()
+    con.close()
+    await query.edit_message_caption(caption=admin_caption)
+    try: await context.bot.send_message(user_id, user_message)
+    except Exception as e: logger.warning(f"Could not notify user {user_id}: {e}")
 
-# --- منطق Self Pro ---
+# --- منطق Self Pro (کامل) ---
 user_sessions = {}
+async def self_pro_menu_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = get_user(update.effective_user.id)
+    if user['self_active']:
+        await update.message.reply_text("⚙️ منوی مدیریت Self Pro:", reply_markup=await self_pro_management_keyboard(update.effective_user.id))
+        return ConversationHandler.END
+    return await start_self_activation_flow(update, context)
+
 async def start_self_activation_flow(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    if get_user(user_id)['balance'] < 10:
+    if get_user(update.effective_user.id)['balance'] < 10:
         await update.message.reply_text("برای فعال سازی سلف، حداقل باید ۱۰ الماس موجودی داشته باشید.")
         return ConversationHandler.END
-    
     keyboard = [[KeyboardButton("📱 اشتراک‌گذاری شماره تلفن", request_contact=True)]]
-    await update.message.reply_text(
-        "لطفا برای فعال‌سازی، شماره تلفن خود را از طریق دکمه زیر به اشتراک بگذارید.",
-        reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=True)
-    )
+    await update.message.reply_text("لطفا برای فعال‌سازی، شماره تلفن خود را به اشتراک بگذارید.", reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=True))
     return ASK_PHONE_CONTACT
 
 async def ask_phone_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    contact = update.message.contact
-    phone = f"+{contact.phone_number.lstrip('+')}"
+    phone = f"+{update.message.contact.phone_number.lstrip('+')}"
     user_id = update.effective_user.id
-    
     await update.message.reply_text("شماره شما دریافت شد. در حال ارسال کد...", reply_markup=ReplyKeyboardRemove())
-    
     context.user_data['phone'] = phone
     client = Client(f"user_{user_id}", api_id=API_ID, api_hash=API_HASH, workdir=SESSION_PATH)
     try:
         await client.connect()
         sent_code = await client.send_code(phone)
         context.user_data.update({'phone_code_hash': sent_code.phone_code_hash, 'client': client})
-        await update.message.reply_text("کد تایید ارسال شده به تلگرام خود را وارد کنید:"); return ASK_CODE
-    except (ApiIdInvalid, PhoneNumberInvalid) as e:
-        error_text = "شماره تلفن نامعتبر است." if isinstance(e, PhoneNumberInvalid) else "API ID یا API Hash نامعتبر است."
-        await update.message.reply_text(f"{error_text} لطفا دوباره تلاش کنید.", reply_markup=await main_reply_keyboard(user_id))
-        if client.is_connected: await client.disconnect()
-        return ConversationHandler.END
+        await update.message.reply_text("کد تایید ارسال شده به تلگرام خود را وارد کنید:")
+        return ASK_CODE
     except Exception as e:
         logger.error(f"Pyrogram connection/send_code error for {phone}: {e}")
-        await update.message.reply_text(
-            "خطا در اتصال به تلگرام. \n\n"
-            "این مشکل معمولا به دلیل نامعتبر بودن `API_ID` یا `API_HASH` رخ می‌دهد. "
-            "لطفا از صحیح بودن مقادیر در تنظیمات ربات اطمینان حاصل کنید.",
-            reply_markup=await main_reply_keyboard(user_id)
-        )
-        if client.is_connected:
-            await client.disconnect()
+        await update.message.reply_text("خطا در اتصال به تلگرام. از معتبر بودن API ID/HASH اطمینان حاصل کنید.", reply_markup=await main_reply_keyboard(user_id))
+        if client.is_connected: await client.disconnect()
         return ConversationHandler.END
 
 async def ask_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
     code = update.message.text
     client: Client = context.user_data.get('client')
-    if not client:
-        await update.message.reply_text(
-            "خطای داخلی: نشست کاربر یافت نشد. لطفا دوباره تلاش کنید.",
-            reply_markup=await main_reply_keyboard(update.effective_user.id)
-        )
-        return ConversationHandler.END
-
+    if not client: return ConversationHandler.END
     try:
-        # <<<< اصلاح شد: بررسی اتصال و اتصال مجدد در صورت نیاز >>>>
-        if not client.is_connected:
-            logger.info(f"Client for user {update.effective_user.id} was disconnected. Reconnecting...")
-            await client.connect()
-
-        await client.sign_in(
-            phone=context.user_data['phone'],
-            phone_code_hash=context.user_data['phone_code_hash'],
-            phone_code=code
-        )
-        await process_self_activation(update, context, client)
-        return ConversationHandler.END
-    except PhoneCodeExpired:
-        await update.message.reply_text(
-            "کد تایید منقضی شده است. لطفا فرآیند فعال‌سازی را دوباره از ابتدا شروع کنید.",
-            reply_markup=await main_reply_keyboard(update.effective_user.id)
-        )
-        if client.is_connected: await client.disconnect()
-        return ConversationHandler.END
-    except PhoneCodeInvalid:
-        await update.message.reply_text("کد اشتباه است. لطفا مجددا تلاش کنید.", reply_markup=await main_reply_keyboard(update.effective_user.id))
-        if client.is_connected: await client.disconnect()
-        return ConversationHandler.END
-    except (ApiIdInvalid, PasswordHashInvalid):
-        await update.message.reply_text(
-            "خطا: `API_ID` یا `API_HASH` نامعتبر است. لطفا مقادیر را در تنظیمات ربات بررسی کنید.",
-            reply_markup=await main_reply_keyboard(update.effective_user.id)
-        )
-        if client.is_connected: await client.disconnect()
-        return ConversationHandler.END
+        if not client.is_connected: await client.connect()
+        await client.sign_in(context.user_data['phone'], context.user_data['phone_code_hash'], code)
+        return await process_self_activation(update, context, client)
     except SessionPasswordNeeded:
         await update.message.reply_text("رمز تایید دو مرحله‌ای را وارد کنید:")
         return ASK_PASSWORD
+    except (PhoneCodeInvalid, PhoneCodeExpired) as e:
+        error_msg = "کد منقضی شده است. لطفا دوباره تلاش کنید." if isinstance(e, PhoneCodeExpired) else "کد اشتباه است. لطفا مجددا تلاش کنید."
+        await update.message.reply_text(error_msg, reply_markup=await main_reply_keyboard(update.effective_user.id))
+        if client.is_connected: await client.disconnect()
+        return ConversationHandler.END
     except Exception as e:
-        logger.error(f"Error on sign in for user {update.effective_user.id}: {e}")
+        logger.error(f"Error on sign in: {e}")
         await update.message.reply_text(f"یک خطای پیش‌بینی نشده رخ داد: {e}", reply_markup=await main_reply_keyboard(update.effective_user.id))
         if client.is_connected: await client.disconnect()
         return ConversationHandler.END
@@ -493,46 +393,40 @@ async def ask_password(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not client: return ConversationHandler.END
     try:
         await client.check_password(password)
-        await process_self_activation(update, context, client)
-    except Exception: 
+        return await process_self_activation(update, context, client)
+    except Exception:
         await update.message.reply_text("رمز عبور اشتباه است.", reply_markup=await main_reply_keyboard(update.effective_user.id))
         if client.is_connected: await client.disconnect()
-    return ConversationHandler.END
+        return ConversationHandler.END
 
 async def process_self_activation(update: Update, context: ContextTypes.DEFAULT_TYPE, client: Client):
     user_id = update.effective_user.id
-    phone = context.user_data['phone']
-    
     me = await client.get_me()
     update_user_db(user_id, "base_first_name", me.first_name)
     update_user_db(user_id, "self_active", True)
-    update_user_db(user_id, "phone_number", phone)
-
+    update_user_db(user_id, "phone_number", context.user_data['phone'])
     user_sessions[user_id] = client
     asyncio.create_task(self_pro_background_task(user_id, client))
     await update.message.reply_text("✅ Self Pro با موفقیت فعال شد!", reply_markup=await main_reply_keyboard(user_id))
+    return ConversationHandler.END
 
 async def self_pro_background_task(user_id: int, client: Client):
     if not client.is_connected:
         try: await client.start()
         except Exception as e: logger.error(f"Could not start client for {user_id}: {e}"); return
-        
     while user_id in user_sessions:
         user = get_user(user_id)
         if not user or not user['self_active']: break
-        
         if not user['self_paused']:
             hourly_cost = int(get_setting("self_hourly_cost"))
             if user['balance'] < hourly_cost:
                 update_user_db(user_id, "self_active", False)
                 update_user_db(user_id, "self_paused", False)
-                if user_id in user_sessions:
-                    await user_sessions[user_id].stop()
-                    del user_sessions[user_id]
+                await client.stop()
+                del user_sessions[user_id]
                 try: await application.bot.send_message(user_id, "موجودی الماس شما تمام شد و Self Pro غیرفعال گردید.")
                 except Exception: pass
                 break
-            
             update_user_balance(user_id, hourly_cost, add=False)
             try:
                 base_name = user['base_first_name'] or (await client.get_me()).first_name
@@ -540,40 +434,23 @@ async def self_pro_background_task(user_id: int, client: Client):
                 styled_time = stylize_time(now_str, user['font_style'])
                 await client.update_profile(first_name=f"{base_name} | {styled_time}")
             except Exception as e: logger.error(f"Failed to update profile for {user_id}: {e}")
-        
-        await asyncio.sleep(60) # Updated to check every minute
+        await asyncio.sleep(60) # چک کردن هر دقیقه
     logger.info(f"Background task for user {user_id} stopped.")
 
-# --- مدیریت Self Pro ---
-async def self_pro_menu_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = get_user(update.effective_user.id)
-    if user['self_active']:
-        await update.message.reply_text(
-            "⚙️ منوی مدیریت Self Pro:",
-            reply_markup=await self_pro_management_keyboard(update.effective_user.id)
-        )
-        return ConversationHandler.END
-    else:
-        await start_self_activation_flow(update, context)
-        return ASK_PHONE_CONTACT
-
+# ... (بقیه توابع مدیریت سلف، شرط بندی، پنل ادمین و پشتیبانی کامل)
 async def toggle_self_pause(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user_id = query.from_user.id
     user = get_user(user_id)
     new_state = not user['self_paused']
     update_user_db(user_id, 'self_paused', new_state)
-    
     status_text = "متوقف" if new_state else "فعال"
     await query.answer(f"ساعت با موفقیت {status_text} شد.")
     await query.edit_message_reply_markup(reply_markup=await self_pro_management_keyboard(user_id))
 
 async def change_font_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query; await query.answer()
-    await query.edit_message_text(
-        "لطفا یک فونت برای نمایش زمان انتخاب کنید:",
-        reply_markup=await font_selection_keyboard(query.from_user.id)
-    )
+    await query.edit_message_text("لطفا یک فونت برای نمایش زمان انتخاب کنید:", reply_markup=await font_selection_keyboard(query.from_user.id))
 
 async def set_font(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -584,294 +461,166 @@ async def set_font(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.edit_message_reply_markup(reply_markup=await font_selection_keyboard(user_id))
 
 async def back_to_self_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    await query.edit_message_text(
-        "⚙️ منوی مدیریت Self Pro:",
-        reply_markup=await self_pro_management_keyboard(query.from_user.id)
-    )
-    
+    query = update.callback_query; await query.answer()
+    await query.edit_message_text("⚙️ منوی مدیریت Self Pro:", reply_markup=await self_pro_management_keyboard(query.from_user.id))
+
 async def delete_self_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    keyboard = [[
-        InlineKeyboardButton(" بله، حذف کن", callback_data="delete_self_final"),
-        InlineKeyboardButton(" خیر", callback_data="back_to_self_menu")
-    ]]
+    keyboard = [[InlineKeyboardButton(" بله، حذف کن", callback_data="delete_self_final"), InlineKeyboardButton(" خیر", callback_data="back_to_self_menu")]]
     await query.answer()
-    await query.edit_message_text(
-        "آیا از حذف کامل سلف خود مطمئن هستید؟ تمام اطلاعات نشست شما پاک خواهد شد.",
-        reply_markup=InlineKeyboardMarkup(keyboard)
-    )
+    await query.edit_message_text("آیا از حذف کامل سلف خود مطمئن هستید؟", reply_markup=InlineKeyboardMarkup(keyboard))
 
 async def delete_self_final(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user_id = query.from_user.id
-    
     if user_id in user_sessions:
         client = user_sessions.pop(user_id)
-        if client.is_connected:
-            await client.stop()
-    
+        if client.is_connected: await client.stop()
     session_file = os.path.join(SESSION_PATH, f"user_{user_id}.session")
-    if os.path.exists(session_file):
-        os.remove(session_file)
-        
+    if os.path.exists(session_file): os.remove(session_file)
     update_user_db(user_id, 'self_active', False)
     update_user_db(user_id, 'self_paused', False)
-    
     await query.answer("سلف شما با موفقیت حذف شد.")
-    await query.edit_message_text("سلف شما حذف شد. برای فعال‌سازی مجدد، از منوی اصلی اقدام کنید.")
+    await query.edit_message_text("سلف شما حذف شد.")
 
-# ... (بقیه توابع بدون تغییر زیاد) ...
 async def check_balance_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    user_data = get_user(user.id)
-    diamond_price = int(get_setting("diamond_price"))
-    toman_equivalent = user_data['balance'] * diamond_price
-    
-    text = (
-        f"👤 کاربر: <b>{get_user_handle(user)}</b>\n\n"
-        f"💎 موجودی الماس: <b>{user_data['balance']}</b>\n"
-        f"💳 معادل تخمینی: <b>{toman_equivalent:,} تومان</b>"
-    )
+    user_data = get_user(update.effective_user.id)
+    toman_equivalent = user_data['balance'] * int(get_setting("diamond_price"))
+    text = (f"👤 کاربر: <b>{get_user_handle(update.effective_user)}</b>\n\n"
+            f"💎 موجودی الماس: <b>{user_data['balance']}</b>\n"
+            f"💳 معادل تخمینی: <b>{toman_equivalent:,} تومان</b>")
     await update.message.reply_text(text, parse_mode=ParseMode.HTML)
 
 async def referral_menu_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     bot_username = (await context.bot.get_me()).username
-    referral_link = f"https.t.me/{bot_username}?start={update.effective_user.id}"
+    referral_link = f"https://t.me/{bot_username}?start={update.effective_user.id}"
     reward = get_setting("referral_reward")
     text = (f"🔗 لینک دعوت شما:\n`{referral_link}`\n\nبا هر دعوت موفق {reward} الماس هدیه بگیرید.")
     await update.message.reply_text(text, parse_mode=ParseMode.MARKDOWN)
-    
+
 async def handle_transfer(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.message or not update.message.reply_to_message: return
-    
+    if not update.message.reply_to_message: return
     match = re.search(r'(\d+)', update.message.text)
     if not match: return
-        
     try: amount = int(match.group(1))
     except (ValueError, TypeError): return
-
     if amount <= 0: return
     sender, receiver = update.effective_user, update.message.reply_to_message.from_user
     if sender.id == receiver.id: await update.message.reply_text("انتقال به خود امکان‌پذیر نیست."); return
     if get_user(sender.id)['balance'] < amount: await update.message.reply_text("موجودی شما کافی نیست."); return
-    
     get_user(receiver.id, receiver.username)
-    
     update_user_balance(sender.id, amount, add=False)
     update_user_balance(receiver.id, amount, add=True)
-    
-    text = (
-        f"✅ <b>انتقال موفق</b> ✅\n\n"
-        f"👤 <b>از:</b> {get_user_handle(sender)}\n"
-        f"👥 <b>به:</b> {get_user_handle(receiver)}\n"
-        f"💎 <b>مبلغ:</b> {amount} الماس"
-    )
+    text = (f"✅ <b>انتقال موفق</b> ✅\n\n"
+            f"👤 <b>از:</b> {get_user_handle(sender)}\n"
+            f"👥 <b>به:</b> {get_user_handle(receiver)}\n"
+            f"💎 <b>مبلغ:</b> {amount} الماس")
     await update.message.reply_text(text, parse_mode=ParseMode.HTML)
 
 async def group_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.message or not update.message.text: return
-    if update.effective_chat.type not in ['group', 'supergroup']: return
+    if not update.message or not update.message.text or update.effective_chat.type not in ['group', 'supergroup']: return
     text = update.message.text.strip()
-    
-    if text == 'موجودی':
-        user = update.effective_user
-        user_data = get_user(user.id, user.username)
-        diamond_price = int(get_setting("diamond_price"))
-        toman_equivalent = user_data['balance'] * diamond_price
-        reply_text = (
-            f"👤 کاربر: <b>{get_user_handle(user)}</b>\n\n"
-            f"💎 موجودی الماس: <b>{user_data['balance']}</b>\n"
-            f"💳 معادل تخمینی: <b>{toman_equivalent:,} تومان</b>"
-        )
-        await update.message.reply_text(reply_text, parse_mode=ParseMode.HTML); return
-
-    if text.startswith('شرطبندی '):
+    if text == 'موجودی': await check_balance_text_handler(update, context)
+    elif text.startswith('شرطبندی '):
         parts = text.split()
         if len(parts) == 2 and parts[1].isdigit():
             context.args = [parts[1]]
             await start_bet(update, context)
-        else: await update.message.reply_text("فرمت صحیح: شرطبندی <مبلغ>"); return
+        else: await update.message.reply_text("فرمت صحیح: شرطبندی <مبلغ>")
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """لغو مکالمه فعلی."""
-    # پاک کردن داده‌های موقت کاربر
     context.user_data.clear()
-    await update.message.reply_text(
-        "عملیات قبلی لغو شد.",
-        reply_markup=await main_reply_keyboard(update.effective_user.id)
-    )
+    await update.message.reply_text("عملیات قبلی لغو شد.", reply_markup=await main_reply_keyboard(update.effective_user.id))
     return ConversationHandler.END
-    
-# --- منطق شرط‌بندی ---
+
 async def resolve_bet_logic(chat_id: int, message_id: int, bet_info: dict, context: ContextTypes.DEFAULT_TYPE):
-    # حذف دکمه‌ها و نمایش پیام "در حال..."
     await context.bot.edit_message_text(chat_id=chat_id, message_id=message_id, text="🎲 در حال مشخص شدن برنده...", reply_markup=None)
-    await asyncio.sleep(3) # تاخیر برای هیجان
-
-    participants_data = { p_id: get_user(p_id) for p_id in bet_info['participants'] }
-    
-    # آزاد کردن کاربران از حالت شرط‌بندی
-    if 'users_in_bet' in context.chat_data:
-        for p_id in bet_info['participants']:
-            context.chat_data['users_in_bet'].discard(p_id)
-
-    # انتخاب برنده به صورت کاملاً تصادفی با random.choice
-    participants_list = list(participants_data.keys())
+    await asyncio.sleep(3)
+    participants_list = list(bet_info['participants'])
     winner_id = random.choice(participants_list)
-    
-    losers_data = {uid: udata for uid, udata in participants_data.items() if uid != winner_id}
-    
+    losers_list = [p_id for p_id in participants_list if p_id != winner_id]
     bet_amount = bet_info['amount']
-    total_pot = bet_amount * len(participants_data)
-    tax = math.ceil(total_pot * 0.05)
-    prize = total_pot - tax
-
-    # موجودی بازنده‌ها کم شده و جایزه به برنده اضافه می‌شود
-    # توجه: موجودی برنده کم نمی‌شود، بلکه جایزه به آن اضافه می‌شود
-    for loser_id in losers_data.keys():
-        update_user_balance(loser_id, bet_amount, add=False)
-    
-    # جایزه به موجودی برنده اضافه می‌شود (مبلغ شرط خودش + مبلغ شرط بازنده‌ها - مالیات)
+    prize = bet_amount * len(participants_list) - math.ceil(bet_amount * len(participants_list) * 0.05)
     update_user_balance(winner_id, prize, add=True)
-
-    losers_text_list = [f"{get_user_handle(await context.bot.get_chat(uid))}" for uid in losers_data.keys()]
-    losers_text = ", ".join(losers_text_list) if losers_text_list else "هیچ‌کس"
-    
-    result_text = (
-        f"<b>◈ ━━━ 🎲 نتیجه شرط‌بندی 🎲 ━━━ ◈</b>\n<b>مبلغ شرط:</b> {bet_amount} الماس\n\n"
-        f"🏆 <b>برنده:</b> {get_user_handle(await context.bot.get_chat(winner_id))}\n"
-        f"💔 <b>بازنده(ها):</b> {losers_text}\n\n💰 <b>جایزه:</b> {prize} الماس\n🧾 <b>مالیات:</b> {tax} الماس\n"
-        f"<b>◈ ━━━ Self Pro ━━━ ◈</b>"
-    )
+    for p_id in bet_info['participants']: context.chat_data.get('users_in_bet', set()).discard(p_id)
+    winner_handle = get_user_handle(await context.bot.get_chat(winner_id))
+    losers_handles = ", ".join([get_user_handle(await context.bot.get_chat(loser_id)) for loser_id in losers_list])
+    result_text = (f"<b>◈ ━━━ 🎲 نتیجه شرط‌بندی 🎲 ━━━ ◈</b>\n<b>مبلغ:</b> {bet_amount} الماس\n\n"
+                   f"🏆 <b>برنده:</b> {winner_handle}\n"
+                   f"💔 <b>بازنده(ها):</b> {losers_handles or 'هیچ‌کس'}\n\n"
+                   f"💰 <b>جایزه:</b> {prize} الماس\n"
+                   f"<b>◈ ━━━ Self Pro ━━━ ◈</b>")
     await context.bot.edit_message_text(chat_id=chat_id, message_id=message_id, text=result_text, parse_mode=ParseMode.HTML)
 
 async def end_bet_on_timeout(context: ContextTypes.DEFAULT_TYPE):
-    job = context.job
-    bet_info = job.data['bet_info']
-    
-    if 'users_in_bet' in context.chat_data:
-        for p_id in bet_info['participants']:
-            context.chat_data['users_in_bet'].discard(p_id)
-
-    # بازگرداندن مبلغ به شرکت‌کنندگان در صورت تایم‌اوت
+    bet_info = context.job.data['bet_info']
     for p_id in bet_info['participants']:
         update_user_balance(p_id, bet_info['amount'], add=True)
-
-    await context.bot.edit_message_text(
-        chat_id=job.chat_id, message_id=job.data['message_id'],
-        text="⌛️ زمان شرط‌بندی تمام شد و به دلیل عدم حضور شرکت‌کننده کافی لغو شد. مبلغ به شما بازگردانده شد.", 
-        reply_markup=None
-    )
+        context.chat_data.get('users_in_bet', set()).discard(p_id)
+    await context.bot.edit_message_text(chat_id=context.job.chat_id, message_id=context.job.data['message_id'], text="⌛️ زمان شرط‌بندی تمام شد و مبلغ بازگردانده شد.")
 
 async def start_bet(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if 'users_in_bet' not in context.chat_data:
-        context.chat_data['users_in_bet'] = set()
-
+    if 'users_in_bet' not in context.chat_data: context.chat_data['users_in_bet'] = set()
     creator = update.effective_user
     if creator.id in context.chat_data['users_in_bet']:
         await update.message.reply_text("شما در حال حاضر در یک شرط‌بندی دیگر فعال هستید."); return
-
     try:
-        amount_str = context.args[0] if context.args else ""
-        if not amount_str.isdigit():
-            await update.message.reply_text("لطفا مبلغ شرط را به صورت عددی وارد کنید. مثال: /bet 100"); return
-        amount = int(amount_str)
+        amount = int(context.args[0])
         if amount <= 0: await update.message.reply_text("مبلغ شرط باید بیشتر از صفر باشد."); return
-    except IndexError:
+    except (IndexError, ValueError):
         await update.message.reply_text("لطفا مبلغ شرط را مشخص کنید. مثال: /bet 100"); return
-
     if get_user(creator.id, creator.username)['balance'] < amount:
         await update.message.reply_text("موجودی شما برای شروع این شرط‌بندی کافی نیست."); return
-
-    bet_info = { 'amount': amount, 'creator_id': creator.id, 'participants': {creator.id} }
-    
+    update_user_balance(creator.id, amount, add=False)
     bet_message = await update.message.reply_text("در حال ایجاد شرط...")
-    
-    keyboard = InlineKeyboardMarkup([[ 
-        InlineKeyboardButton("✅ پیوستن", callback_data=f"join_bet_{bet_message.message_id}"), 
-        InlineKeyboardButton("❌ لغو شرط", callback_data=f"cancel_bet_{bet_message.message_id}")
-    ]])
-
-    await context.bot.edit_message_text(
-        chat_id=update.effective_chat.id, message_id=bet_message.message_id,
-        text=f"🎲 شرط‌بندی جدید به مبلغ <b>{amount}</b> الماس توسط {get_user_handle(creator)} شروع شد!\n\n"
-             f"نفر دوم که به شرط بپیوندد، برنده مشخص خواهد شد.\n\n"
-             f"<b>شرکت کنندگان:</b>\n- {get_user_handle(creator)}",
-        reply_markup=keyboard, parse_mode=ParseMode.HTML
-    )
-    
-    job = context.job_queue.run_once(
-        end_bet_on_timeout, 60, chat_id=update.effective_chat.id, name=f"bet_{bet_message.message_id}",
-        data={'message_id': bet_message.message_id, 'bet_info': bet_info}
-    )
-    
+    bet_info = {'amount': amount, 'creator_id': creator.id, 'participants': {creator.id}}
+    keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("✅ پیوستن", callback_data=f"join_bet_{bet_message.message_id}"), InlineKeyboardButton("❌ لغو شرط", callback_data=f"cancel_bet_{bet_message.message_id}")]])
+    text = (f"🎲 شرط‌بندی جدید به مبلغ <b>{amount}</b> الماس توسط {get_user_handle(creator)} شروع شد!\n\n"
+            f"نفر دوم که بپیوندد، برنده مشخص خواهد شد.\n\n"
+            f"<b>شرکت کنندگان:</b>\n- {get_user_handle(creator)}")
+    await context.bot.edit_message_text(chat_id=update.effective_chat.id, message_id=bet_message.message_id, text=text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
+    job = context.job_queue.run_once(end_bet_on_timeout, 60, chat_id=update.effective_chat.id, name=f"bet_{bet_message.message_id}", data={'message_id': bet_message.message_id, 'bet_info': bet_info})
     bet_info['job'] = job
-    if 'bets' not in context.chat_data:
-        context.chat_data['bets'] = {}
+    if 'bets' not in context.chat_data: context.chat_data['bets'] = {}
     context.chat_data['bets'][bet_message.message_id] = bet_info
     context.chat_data['users_in_bet'].add(creator.id)
 
 async def join_bet(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query; user = query.from_user
     message_id = int(query.data.split("_")[-1])
-
     bets = context.chat_data.get('bets', {})
-    if message_id not in bets:
-        await query.answer("این شرط‌بندی دیگر فعال نیست.", show_alert=True); return
-        
+    if message_id not in bets: await query.answer("این شرط‌بندی دیگر فعال نیست.", show_alert=True); return
     bet_info = bets[message_id]
-    if user.id in bet_info['participants']:
-        await query.answer("شما قبلاً در این شرط شرکت کرده‌اید.", show_alert=True); return
-        
-    if user.id in context.chat_data.get('users_in_bet', set()):
-        await query.answer("شما در حال حاضر در یک شرط‌بندی دیگر فعال هستید.", show_alert=True); return
-
+    if user.id in bet_info['participants']: await query.answer("شما قبلاً در این شرط شرکت کرده‌اید.", show_alert=True); return
+    if user.id in context.chat_data.get('users_in_bet', set()): await query.answer("شما در حال حاضر در یک شرط‌بندی دیگر فعال هستید.", show_alert=True); return
     if get_user(user.id, user.username)['balance'] < bet_info['amount']:
         await query.answer("موجودی شما برای شرکت در این شرط‌بندی کافی نیست.", show_alert=True); return
-        
+    update_user_balance(user.id, bet_info['amount'], add=False)
     bet_info['participants'].add(user.id)
     context.chat_data['users_in_bet'].add(user.id)
-    
-    await query.answer("شما به شرط پیوستید! نتیجه بلافاصله اعلام می‌شود...", show_alert=False)
-
+    await query.answer("شما به شرط پیوستید! نتیجه بلافاصله اعلام می‌شود...")
     bet_info['job'].schedule_removal()
     context.chat_data['bets'].pop(message_id, None)
-
-    # کسر موجودی از هر دو نفر لحظاتی قبل از اعلام نتیجه
-    for p_id in bet_info['participants']:
-        update_user_balance(p_id, bet_info['amount'], add=False)
-
     await resolve_bet_logic(chat_id=update.effective_chat.id, message_id=message_id, bet_info=bet_info, context=context)
 
 async def cancel_bet(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     message_id = int(query.data.split("_")[-1])
-
     bets = context.chat_data.get('bets', {})
-    if message_id not in bets:
-        await query.answer("این شرط‌بندی دیگر فعال نیست.", show_alert=True); return
-    
+    if message_id not in bets: await query.answer("این شرط‌بندی دیگر فعال نیست.", show_alert=True); return
     bet_info = bets[message_id]
     if query.from_user.id != bet_info['creator_id']:
         await query.answer("فقط شروع‌کننده می‌تواند شرط را لغو کند.", show_alert=True); return
-
     bet_info['job'].schedule_removal()
-    
-    if 'users_in_bet' in context.chat_data:
-        for p_id in bet_info['participants']:
-            context.chat_data['users_in_bet'].discard(p_id)
-            
+    for p_id in bet_info['participants']:
+        update_user_balance(p_id, bet_info['amount'], add=True)
+        context.chat_data.get('users_in_bet', set()).discard(p_id)
     context.chat_data['bets'].pop(message_id, None)
-
-    await query.message.edit_text(f"🎲 شرط‌بندی توسط {get_user_handle(query.from_user)} لغو شد.")
+    await query.message.edit_text(f"🎲 شرط‌بندی توسط {get_user_handle(query.from_user)} لغو شد و مبلغ بازگردانده شد.")
     await query.answer("شرط با موفقیت لغو شد.")
 
-# --- پنل ادمین (مکالمه) ---
 async def admin_panel_entry_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    if not is_admin(user.id):
+    if not is_admin(update.effective_user.id):
         await update.message.reply_text("شما دسترسی به این بخش را ندارید."); return ConversationHandler.END
     await update.message.reply_text("👑 به پنل ادمین خوش آمدید:", reply_markup=await admin_panel_keyboard())
     return ADMIN_PANEL_MAIN
@@ -893,78 +642,102 @@ async def ask_for_setting(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def receive_setting(update: Update, context: ContextTypes.DEFAULT_TYPE):
     new_value = update.message.text
     setting_key = context.user_data.pop("setting_key", None)
-    if not setting_key:
-        await update.message.reply_text("خطا! لطفا دوباره از پنل ادمین تلاش کنید."); return ADMIN_PANEL_MAIN
+    if not setting_key: return ADMIN_PANEL_MAIN
     update_setting(setting_key, new_value)
-    await update.message.reply_text("✅ تنظیمات با موفقیت ذخیره شد.")
-    await update.message.reply_text("👑 پنل ادمین:", reply_markup=await admin_panel_keyboard())
+    await update.message.reply_text("✅ تنظیمات با موفقیت ذخیره شد.", reply_markup=await admin_panel_keyboard())
     return ADMIN_PANEL_MAIN
 
-def cleanup_lock_file():
-    if os.path.exists(LOCK_FILE_PATH):
-        os.remove(LOCK_FILE_PATH); logger.info("Lock file removed.")
+async def support_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    await update.message.reply_text("لطفا پیام خود را برای ارسال به پشتیبانی بنویسید.", reply_markup=ReplyKeyboardRemove())
+    return AWAITING_SUPPORT_MESSAGE
 
+async def forward_message_to_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    user = update.effective_user
+    await update.message.reply_text("✅ پیام شما برای پشتیبانی ارسال شد.", reply_markup=await main_reply_keyboard(user.id))
+    forward_text = (f"📩 **پیام پشتیبانی جدید**\n\n👤 **از:** {get_user_handle(user)} (ID: `{user.id}`)\n\n📝 **متن:**\n{update.message.text}")
+    keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("✍️ پاسخ", callback_data=f"reply_to_{user.id}")]])
+    for admin_id in get_admins():
+        try: await context.bot.send_message(admin_id, forward_text, reply_markup=keyboard, parse_mode=ParseMode.MARKDOWN)
+        except Exception as e: logger.error(f"Failed to forward support message to admin {admin_id}: {e}")
+    return ConversationHandler.END
+
+async def ask_for_reply(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    await query.answer()
+    user_id_to_reply = int(query.data.split("_")[-1])
+    context.user_data['reply_to_user_id'] = user_id_to_reply
+    await query.edit_message_text(f"{query.message.text}\n\n---\nلطفا پاسخ خود را بنویسید.", reply_markup=None)
+    return AWAITING_ADMIN_REPLY
+
+async def send_reply_to_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    user_id = context.user_data.pop('reply_to_user_id', None)
+    if not user_id: return ConversationHandler.END
+    try:
+        await context.bot.send_message(user_id, f"📨 **پاسخ پشتیبانی:**\n\n{update.message.text}")
+        await update.message.reply_text("✅ پاسخ شما با موفقیت ارسال شد.")
+    except Exception as e: await update.message.reply_text(f"خطا در ارسال پیام: {e}")
+    return ConversationHandler.END
+# --- Main Application Setup ---
 def main() -> None:
     global application
     setup_database()
     application = Application.builder().token(TELEGRAM_TOKEN).build()
-    
-    # الگوی مشترک برای تمام دکمه‌های منوی اصلی
-    main_menu_pattern = '^💎 موجودی$|^🚀 Self Pro$|^💰 افزایش موجودی$|^🎁 کسب جم رایگان$|^👑 پنل ادمین$'
-
-    conversation_handler = ConversationHandler(
+    main_menu_pattern = '^💎 موجودی$|^🚀 Self Pro$|^💰 افزایش موجودی$|^🎁 کسب جم رایگان$|^👑 پنل ادمین$|^💬 پشتیبانی$'
+    conv_handler = ConversationHandler(
         entry_points=[
             MessageHandler(filters.Regex('^💰 افزایش موجودی$'), buy_diamond_start_text),
             MessageHandler(filters.Regex('^🚀 Self Pro$'), self_pro_menu_text_handler),
             MessageHandler(filters.Regex('^👑 پنل ادمین$'), admin_panel_entry_text),
+            MessageHandler(filters.Regex('^💬 پشتیبانی$'), support_start),
+            CallbackQueryHandler(ask_for_reply, pattern=r"^reply_to_")
         ],
         states={
-            ASK_DIAMOND_AMOUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND & ~filters.Regex(main_menu_pattern), ask_diamond_amount)],
+            ASK_DIAMOND_AMOUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, ask_diamond_amount)],
             AWAIT_RECEIPT: [MessageHandler(filters.PHOTO, await_receipt)],
             ASK_PHONE_CONTACT: [MessageHandler(filters.CONTACT, ask_phone_contact)],
-            ASK_CODE: [MessageHandler(filters.TEXT & ~filters.COMMAND & ~filters.Regex(main_menu_pattern), ask_code)],
-            ASK_PASSWORD: [MessageHandler(filters.TEXT & ~filters.COMMAND & ~filters.Regex(main_menu_pattern), ask_password)],
+            ASK_CODE: [MessageHandler(filters.TEXT & ~filters.COMMAND, ask_code)],
+            ASK_PASSWORD: [MessageHandler(filters.TEXT & ~filters.COMMAND, ask_password)],
             ADMIN_PANEL_MAIN: [CallbackQueryHandler(ask_for_setting, pattern=r"admin_set_")],
-            SETTING_PRICE: [MessageHandler(filters.TEXT & ~filters.COMMAND & ~filters.Regex(main_menu_pattern), receive_setting)],
-            SETTING_INITIAL_BALANCE: [MessageHandler(filters.TEXT & ~filters.COMMAND & ~filters.Regex(main_menu_pattern), receive_setting)],
-            SETTING_SELF_COST: [MessageHandler(filters.TEXT & ~filters.COMMAND & ~filters.Regex(main_menu_pattern), receive_setting)],
-            SETTING_REFERRAL_REWARD: [MessageHandler(filters.TEXT & ~filters.COMMAND & ~filters.Regex(main_menu_pattern), receive_setting)],
-            SETTING_PAYMENT_CARD: [MessageHandler(filters.TEXT & ~filters.COMMAND & ~filters.Regex(main_menu_pattern), receive_setting)],
-            SETTING_CHANNEL_LINK: [MessageHandler(filters.TEXT & ~filters.COMMAND & ~filters.Regex(main_menu_pattern), receive_setting)],
+            SETTING_PRICE: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_setting)],
+            SETTING_INITIAL_BALANCE: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_setting)],
+            SETTING_SELF_COST: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_setting)],
+            SETTING_REFERRAL_REWARD: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_setting)],
+            SETTING_PAYMENT_CARD: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_setting)],
+            SETTING_CHANNEL_LINK: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_setting)],
+            AWAITING_SUPPORT_MESSAGE: [MessageHandler(filters.TEXT & ~filters.COMMAND, forward_message_to_admin)],
+            AWAITING_ADMIN_REPLY: [MessageHandler(filters.TEXT & ~filters.COMMAND, send_reply_to_user)]
         },
-        fallbacks=[MessageHandler(filters.Regex(main_menu_pattern), start)], # بازگشت به منوی اصلی
+        fallbacks=[MessageHandler(filters.Regex(main_menu_pattern), start), CommandHandler("cancel", cancel)],
         allow_reentry=True,
     )
-
     application.add_handler(CommandHandler("start", start))
-    application.add_handler(conversation_handler)
-    
+    application.add_handler(conv_handler)
     application.add_handler(CommandHandler("bet", start_bet, filters=filters.ChatType.GROUPS))
     application.add_handler(CallbackQueryHandler(join_bet, pattern=r"^join_bet_"))
     application.add_handler(CallbackQueryHandler(cancel_bet, pattern=r"^cancel_bet_"))
     application.add_handler(CallbackQueryHandler(handle_transaction_approval, pattern=r"^(approve|reject)_\d+$"))
-
     application.add_handler(CallbackQueryHandler(toggle_self_pause, pattern=r"^self_(pause|resume)$"))
     application.add_handler(CallbackQueryHandler(change_font_menu, pattern=r"^change_font_menu$"))
     application.add_handler(CallbackQueryHandler(set_font, pattern=r"^set_font_"))
     application.add_handler(CallbackQueryHandler(back_to_self_menu, pattern=r"^back_to_self_menu$"))
     application.add_handler(CallbackQueryHandler(delete_self_confirm, pattern=r"^delete_self_confirm$"))
     application.add_handler(CallbackQueryHandler(delete_self_final, pattern=r"^delete_self_final$"))
-
     application.add_handler(MessageHandler(filters.Regex('^💎 موجودی$'), check_balance_text_handler))
     application.add_handler(MessageHandler(filters.Regex('^🎁 کسب جم رایگان$'), referral_menu_text_handler))
-    
     application.add_handler(MessageHandler(filters.REPLY & filters.Regex(r'^(انتقال الماس\s*\d+|\d+)$'), handle_transfer))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & filters.ChatType.GROUPS, group_text_handler))
-    
     logger.info("Bot is starting...")
     application.run_polling(drop_pending_updates=True)
+
+def cleanup_lock_file():
+    if os.path.exists(LOCK_FILE_PATH):
+        os.remove(LOCK_FILE_PATH)
+        logger.info("Lock file removed.")
 
 if __name__ == "__main__":
     if os.path.exists(LOCK_FILE_PATH):
         logger.critical("Lock file exists. Another instance might be running. Shutting down.")
         sys.exit(1)
-    
     with open(LOCK_FILE_PATH, "w") as f: f.write(str(os.getpid()))
     atexit.register(cleanup_lock_file)
     logger.info(f"Lock file created at {LOCK_FILE_PATH}")
