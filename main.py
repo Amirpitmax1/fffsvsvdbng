@@ -439,25 +439,36 @@ async def ask_phone_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def ask_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
     code = update.message.text
-    client = context.user_data.get('client')
-    if not client: return ConversationHandler.END
+    client: Client = context.user_data.get('client')
+    if not client:
+        await update.message.reply_text(
+            "خطای داخلی: نشست کاربر یافت نشد. لطفا دوباره تلاش کنید.",
+            reply_markup=await main_reply_keyboard(update.effective_user.id)
+        )
+        return ConversationHandler.END
 
     try:
-        await client.sign_in(context.user_data['phone'], context.user_data['phone_code_hash'], code)
+        # <<<< اصلاح شد: بررسی اتصال و اتصال مجدد در صورت نیاز >>>>
+        if not client.is_connected:
+            logger.info(f"Client for user {update.effective_user.id} was disconnected. Reconnecting...")
+            await client.connect()
+
+        await client.sign_in(
+            phone=context.user_data['phone'],
+            phone_code_hash=context.user_data['phone_code_hash'],
+            phone_code=code
+        )
         await process_self_activation(update, context, client)
-        return ConversationHandler.END
-    except SessionPasswordNeeded: 
-        await update.message.reply_text("رمز تایید دو مرحله‌ای را وارد کنید:")
-        return ASK_PASSWORD
-    except PhoneCodeInvalid: 
-        await update.message.reply_text("کد اشتباه است. لطفا مجددا تلاش کنید.", reply_markup=await main_reply_keyboard(update.effective_user.id))
-        if client.is_connected: await client.disconnect()
         return ConversationHandler.END
     except PhoneCodeExpired:
         await update.message.reply_text(
             "کد تایید منقضی شده است. لطفا فرآیند فعال‌سازی را دوباره از ابتدا شروع کنید.",
             reply_markup=await main_reply_keyboard(update.effective_user.id)
         )
+        if client.is_connected: await client.disconnect()
+        return ConversationHandler.END
+    except PhoneCodeInvalid:
+        await update.message.reply_text("کد اشتباه است. لطفا مجددا تلاش کنید.", reply_markup=await main_reply_keyboard(update.effective_user.id))
         if client.is_connected: await client.disconnect()
         return ConversationHandler.END
     except (ApiIdInvalid, PasswordHashInvalid):
@@ -467,8 +478,11 @@ async def ask_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         if client.is_connected: await client.disconnect()
         return ConversationHandler.END
+    except SessionPasswordNeeded:
+        await update.message.reply_text("رمز تایید دو مرحله‌ای را وارد کنید:")
+        return ASK_PASSWORD
     except Exception as e:
-        logger.error(f"Error on sign in: {e}")
+        logger.error(f"Error on sign in for user {update.effective_user.id}: {e}")
         await update.message.reply_text(f"یک خطای پیش‌بینی نشده رخ داد: {e}", reply_markup=await main_reply_keyboard(update.effective_user.id))
         if client.is_connected: await client.disconnect()
         return ConversationHandler.END
@@ -512,7 +526,9 @@ async def self_pro_background_task(user_id: int, client: Client):
             if user['balance'] < hourly_cost:
                 update_user_db(user_id, "self_active", False)
                 update_user_db(user_id, "self_paused", False)
-                await client.stop(); del user_sessions[user_id]
+                if user_id in user_sessions:
+                    await user_sessions[user_id].stop()
+                    del user_sessions[user_id]
                 try: await application.bot.send_message(user_id, "موجودی الماس شما تمام شد و Self Pro غیرفعال گردید.")
                 except Exception: pass
                 break
@@ -525,7 +541,7 @@ async def self_pro_background_task(user_id: int, client: Client):
                 await client.update_profile(first_name=f"{base_name} | {styled_time}")
             except Exception as e: logger.error(f"Failed to update profile for {user_id}: {e}")
         
-        await asyncio.sleep(3600)
+        await asyncio.sleep(60) # Updated to check every minute
     logger.info(f"Background task for user {user_id} stopped.")
 
 # --- مدیریت Self Pro ---
@@ -701,7 +717,7 @@ async def resolve_bet_logic(chat_id: int, message_id: int, bet_info: dict, conte
         for p_id in bet_info['participants']:
             context.chat_data['users_in_bet'].discard(p_id)
 
-    # <<<< اصلاح شد: انتخاب برنده به صورت کاملاً تصادفی با random.choice >>>>
+    # انتخاب برنده به صورت کاملاً تصادفی با random.choice
     participants_list = list(participants_data.keys())
     winner_id = random.choice(participants_list)
     
@@ -739,9 +755,15 @@ async def end_bet_on_timeout(context: ContextTypes.DEFAULT_TYPE):
         for p_id in bet_info['participants']:
             context.chat_data['users_in_bet'].discard(p_id)
 
+    # بازگرداندن مبلغ به شرکت‌کنندگان در صورت تایم‌اوت
+    for p_id in bet_info['participants']:
+        update_user_balance(p_id, bet_info['amount'], add=True)
+
     await context.bot.edit_message_text(
         chat_id=job.chat_id, message_id=job.data['message_id'],
-        text="⌛️ زمان شرط‌بندی تمام شد و به دلیل عدم حضور شرکت‌کننده کافی لغو شد.", reply_markup=None)
+        text="⌛️ زمان شرط‌بندی تمام شد و به دلیل عدم حضور شرکت‌کننده کافی لغو شد. مبلغ به شما بازگردانده شد.", 
+        reply_markup=None
+    )
 
 async def start_bet(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if 'users_in_bet' not in context.chat_data:
@@ -752,18 +774,16 @@ async def start_bet(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("شما در حال حاضر در یک شرط‌بندی دیگر فعال هستید."); return
 
     try:
-        amount_str = context.args[0] if context.args else None
-        if not amount_str: raise IndexError
+        amount_str = context.args[0] if context.args else ""
+        if not amount_str.isdigit():
+            await update.message.reply_text("لطفا مبلغ شرط را به صورت عددی وارد کنید. مثال: /bet 100"); return
         amount = int(amount_str)
         if amount <= 0: await update.message.reply_text("مبلغ شرط باید بیشتر از صفر باشد."); return
-    except (IndexError, ValueError):
-        await update.message.reply_text("لطفا مبلغ شرط را مشخص کنید. مثال: /bet 100 یا شرطبندی 100"); return
+    except IndexError:
+        await update.message.reply_text("لطفا مبلغ شرط را مشخص کنید. مثال: /bet 100"); return
 
     if get_user(creator.id, creator.username)['balance'] < amount:
         await update.message.reply_text("موجودی شما برای شروع این شرط‌بندی کافی نیست."); return
-
-    # از موجودی شروع‌کننده کم می‌شود
-    update_user_balance(creator.id, amount, add=False)
 
     bet_info = { 'amount': amount, 'creator_id': creator.id, 'participants': {creator.id} }
     
@@ -801,19 +821,16 @@ async def join_bet(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if message_id not in bets:
         await query.answer("این شرط‌بندی دیگر فعال نیست.", show_alert=True); return
         
-    if user.id in context.chat_data.get('users_in_bet', set()):
-        await query.answer("شما در حال حاضر در یک شرط‌بندی دیگر فعال هستید.", show_alert=True); return
-
     bet_info = bets[message_id]
     if user.id in bet_info['participants']:
         await query.answer("شما قبلاً در این شرط شرکت کرده‌اید.", show_alert=True); return
         
+    if user.id in context.chat_data.get('users_in_bet', set()):
+        await query.answer("شما در حال حاضر در یک شرط‌بندی دیگر فعال هستید.", show_alert=True); return
+
     if get_user(user.id, user.username)['balance'] < bet_info['amount']:
         await query.answer("موجودی شما برای شرکت در این شرط‌بندی کافی نیست.", show_alert=True); return
         
-    # کم کردن موجودی شرکت‌کننده دوم
-    update_user_balance(user.id, bet_info['amount'], add=False)
-
     bet_info['participants'].add(user.id)
     context.chat_data['users_in_bet'].add(user.id)
     
@@ -821,6 +838,11 @@ async def join_bet(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     bet_info['job'].schedule_removal()
     context.chat_data['bets'].pop(message_id, None)
+
+    # کسر موجودی از هر دو نفر لحظاتی قبل از اعلام نتیجه
+    for p_id in bet_info['participants']:
+        update_user_balance(p_id, bet_info['amount'], add=False)
+
     await resolve_bet_logic(chat_id=update.effective_chat.id, message_id=message_id, bet_info=bet_info, context=context)
 
 async def cancel_bet(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -835,10 +857,6 @@ async def cancel_bet(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if query.from_user.id != bet_info['creator_id']:
         await query.answer("فقط شروع‌کننده می‌تواند شرط را لغو کند.", show_alert=True); return
 
-    # بازگرداندن مبلغ به شرکت‌کنندگان
-    for p_id in bet_info['participants']:
-        update_user_balance(p_id, bet_info['amount'], add=True)
-
     bet_info['job'].schedule_removal()
     
     if 'users_in_bet' in context.chat_data:
@@ -847,7 +865,7 @@ async def cancel_bet(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
     context.chat_data['bets'].pop(message_id, None)
 
-    await query.message.edit_text(f"🎲 شرط‌بندی توسط {get_user_handle(query.from_user)} لغو شد و مبلغ به شرکت‌کنندگان بازگردانده شد.")
+    await query.message.edit_text(f"🎲 شرط‌بندی توسط {get_user_handle(query.from_user)} لغو شد.")
     await query.answer("شرط با موفقیت لغو شد.")
 
 # --- پنل ادمین (مکالمه) ---
