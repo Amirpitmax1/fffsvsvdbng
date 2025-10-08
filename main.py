@@ -11,7 +11,7 @@ import math
 import re
 import sys
 import atexit
-import yaml  # <<< کتابخانه جدید برای خواندن فایل YAML
+import yaml
 
 # کتابخانه‌های وب برای زنده نگه داشتن ربات در Render
 from flask import Flask
@@ -79,7 +79,7 @@ try:
         OWNER_ID = int(env_vars.get("OWNER_ID"))
 
         if not all([TELEGRAM_TOKEN, API_ID, API_HASH, OWNER_ID]):
-            raise ValueError("یکی از متغیرهای مورد نیاز (TOKEN, ID, HASH, OWNER) در render.yaml یافت نشد.")
+            raise ValueError("یکی از متغیرهای مورد نیاز در render.yaml یافت نشد.")
 
 except (FileNotFoundError, yaml.YAMLError, KeyError, ValueError) as e:
     logger.critical(f"خطای مرگبار در خواندن render.yaml: {e}")
@@ -346,7 +346,7 @@ async def handle_transaction_approval(update: Update, context: ContextTypes.DEFA
     try: await context.bot.send_message(user_id, user_message)
     except Exception as e: logger.warning(f"Could not notify user {user_id}: {e}")
 
-# --- منطق Self Pro ---
+# --- <<< منطق ورود به سلف (کامل و اصلاح شده) >>> ---
 user_sessions = {}
 async def self_pro_menu_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = get_user(update.effective_user.id)
@@ -457,6 +457,7 @@ async def self_pro_background_task(user_id: int, client: Client):
         await asyncio.sleep(60)
     logger.info(f"Background task for user {user_id} stopped.")
 
+# --- بقیه توابع ---
 async def toggle_self_pause(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query; await query.answer()
     user = get_user(query.from_user.id)
