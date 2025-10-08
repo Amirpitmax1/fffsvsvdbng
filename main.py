@@ -11,7 +11,6 @@ import math
 import re
 import sys
 import atexit
-import yaml
 
 # کتابخانه‌های وب برای زنده نگه داشتن ربات در Render
 from flask import Flask
@@ -366,6 +365,7 @@ async def ask_phone_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "**⚠️ توجه: فقط عدد کد را تایپ کنید و از فوروارد کردن پیام تلگرام خودداری کنید.**",
             parse_mode=ParseMode.MARKDOWN
         )
+        await client.disconnect()
         return ASK_CODE
     except Exception as e:
         logger.error(f"Pyrogram connection/send_code error for {phone}: {e}")
@@ -384,6 +384,8 @@ async def ask_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return ConversationHandler.END
 
     try:
+        if not client.is_connected:
+            await client.connect()
         await client.sign_in(context.user_data['phone'], context.user_data['phone_code_hash'], code)
         logger.info(f"Sign-in successful (pre-2FA) for user {update.effective_user.id}")
         return await process_self_activation(update, context, client)
@@ -423,6 +425,8 @@ async def ask_password(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return ConversationHandler.END
 
     try:
+        if not client.is_connected:
+            await client.connect()
         await client.check_password(password)
         logger.info(f"2FA password correct for user {update.effective_user.id}")
         return await process_self_activation(update, context, client)
@@ -793,3 +797,6 @@ if __name__ == "__main__":
     logger.info(f"Lock file created at {LOCK_FILE_PATH}")
     flask_thread = Thread(target=run_flask); flask_thread.daemon = True; flask_thread.start()
     main()
+
+" in "main.py". Please make changes so that the Telegram bot, which is a key part of the project, also has a mandatory channel membership feature added. This feature should ensure that only users who are members of a specified channel can interact with the bot. If a non-member tries to use the bot, they should be prompted to join the channel first, with a clear message and a button that links to the channel. This functionality should be integrated seamlessly into the existing command and message handlers. The channel ID should be configurable through the admin panel, building upon the existing "admin_set_channel" functionality. A new decorator or wrapper function should be created to apply this check to relevant handlers like 'start', 'self_pro_menu_text_handler', and others to avoid code duplication and maintain a clean, modular structure. I expect that you will carefully integrate this feature without disrupting the current functionalities, ensuring the bot remains stable and robust.
+
