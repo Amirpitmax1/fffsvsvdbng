@@ -383,41 +383,69 @@ async def ask_phone_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return ConversationHandler.END
 
 async def ask_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    code = update.message.text
+    code = update.message.text.strip()
+    logger.info(f"Attempting to sign in for user {update.effective_user.id} with code.")
     client: Client = context.user_data.get('client')
-    if not client: return ConversationHandler.END
+
+    if not client:
+        logger.warning(f"Client object not found in user_data for user {update.effective_user.id}")
+        await update.message.reply_text("یک خطای داخلی رخ داده است. لطفا با /cancel مجدَد تلاش کنید.", reply_markup=await main_reply_keyboard(update.effective_user.id))
+        return ConversationHandler.END
+
     try:
         await client.sign_in(context.user_data['phone'], context.user_data['phone_code_hash'], code)
+        logger.info(f"Sign-in successful (pre-2FA) for user {update.effective_user.id}")
         return await process_self_activation(update, context, client)
+
     except SessionPasswordNeeded:
+        logger.info(f"2FA password needed for user {update.effective_user.id}")
         await update.message.reply_text("این اکانت دارای تایید دو مرحله‌ای است. لطفا رمز عبور خود را وارد کنید:")
         return ASK_PASSWORD
-    except (PhoneCodeInvalid, PhoneCodeExpired) as e:
-        error_msg = "کد تایید منقضی شده است. لطفا دوباره تلاش کنید." if isinstance(e, PhoneCodeExpired) else "کد تایید اشتباه است. لطفا مجددا تلاش کنید."
-        await update.message.reply_text(error_msg, reply_markup=await main_reply_keyboard(update.effective_user.id))
+
+    except PhoneCodeInvalid:
+        logger.warning(f"Invalid phone code provided by user {update.effective_user.id}")
+        await update.message.reply_text("کد تایید اشتباه است. لطفا دوباره کد صحیح را وارد کنید یا برای لغو /cancel را بفرستید.")
+        return ASK_CODE
+
+    except PhoneCodeExpired:
+        logger.warning(f"Phone code expired for user {update.effective_user.id}")
+        await update.message.reply_text("کد تایید منقضی شده است. لطفا فرآیند را از ابتدا شروع کنید.", reply_markup=await main_reply_keyboard(update.effective_user.id))
         if client.is_connected: await client.disconnect()
+        context.user_data.clear()
         return ConversationHandler.END
+
     except Exception as e:
-        logger.error(f"Error on sign in: {e}")
-        await update.message.reply_text(f"یک خطای پیش‌بینی نشده رخ داد: {e}", reply_markup=await main_reply_keyboard(update.effective_user.id))
+        logger.error(f"An unexpected error occurred during sign-in for user {update.effective_user.id}: {e}", exc_info=True)
+        await update.message.reply_text(f"یک خطای پیش‌بینی نشده رخ داد: {e}\nلطفا دوباره تلاش کنید.", reply_markup=await main_reply_keyboard(update.effective_user.id))
         if client.is_connected: await client.disconnect()
+        context.user_data.clear()
         return ConversationHandler.END
 
 async def ask_password(update: Update, context: ContextTypes.DEFAULT_TYPE):
     password = update.message.text
+    logger.info(f"Checking 2FA password for user {update.effective_user.id}")
     client: Client = context.user_data.get('client')
-    if not client: return ConversationHandler.END
+
+    if not client:
+        logger.warning(f"Client object not found in user_data for user {update.effective_user.id} at password stage.")
+        await update.message.reply_text("یک خطای داخلی رخ داده است. لطفا با /cancel مجدَد تلاش کنید.", reply_markup=await main_reply_keyboard(update.effective_user.id))
+        return ConversationHandler.END
+
     try:
         await client.check_password(password)
+        logger.info(f"2FA password correct for user {update.effective_user.id}")
         return await process_self_activation(update, context, client)
-    except (PasswordHashInvalid):
-        await update.message.reply_text("رمز عبور اشتباه است. لطفا مجددا تلاش کنید.", reply_markup=await main_reply_keyboard(update.effective_user.id))
-        if client.is_connected: await client.disconnect()
-        return ConversationHandler.END
+
+    except PasswordHashInvalid:
+        logger.warning(f"Invalid 2FA password provided by user {update.effective_user.id}")
+        await update.message.reply_text("رمز عبور اشتباه است. لطفا دوباره رمز صحیح را وارد کنید یا برای لغو /cancel را بفرستید.")
+        return ASK_PASSWORD
+
     except Exception as e:
-        logger.error(f"Error on check_password: {e}")
+        logger.error(f"An unexpected error occurred during check_password for user {update.effective_user.id}: {e}", exc_info=True)
         await update.message.reply_text(f"یک خطای پیش‌بینی نشده در بررسی رمز عبور رخ داد: {e}", reply_markup=await main_reply_keyboard(update.effective_user.id))
         if client.is_connected: await client.disconnect()
+        context.user_data.clear()
         return ConversationHandler.END
 
 async def process_self_activation(update: Update, context: ContextTypes.DEFAULT_TYPE, client: Client):
@@ -774,3 +802,4 @@ if __name__ == "__main__":
     logger.info(f"Lock file created at {LOCK_FILE_PATH}")
     flask_thread = Thread(target=run_flask); flask_thread.daemon = True; flask_thread.start()
     main()
+
