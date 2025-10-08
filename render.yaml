@@ -21,7 +21,7 @@ services:
       - key: RENDER_DISK_PATH # Pass the disk mount path to the app
         value: /app/data
       - key: TELEGRAM_TOKEN
-        value: "7998966950:AAGEaASYQ8S16ADyl0x5-ucSe2oWPpJHMbg"
+        value: "8493268938:AAE9hgHlgZUMNND0EyEZ5X44_M8NiWyU9q4"
       - key: API_ID
         value: "9536480"
       - key: API_HASH
