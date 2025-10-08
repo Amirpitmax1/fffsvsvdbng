@@ -11,6 +11,7 @@ import math
 import re
 import sys
 import atexit
+from functools import wraps
 
 # کتابخانه‌های وب برای زنده نگه داشتن ربات در Render
 from flask import Flask
@@ -34,7 +35,7 @@ from telegram.ext import (
     ContextTypes,
     filters
 )
-from telegram.constants import ParseMode
+from telegram.constants import ParseMode, ChatMemberStatus
 
 # کتابخانه برای بخش Self Pro (Userbot)
 from pyrogram import Client
@@ -203,6 +204,35 @@ def is_admin(user_id):
 def get_user_handle(user: User):
     return f"@{user.username}" if user.username else user.full_name
 
+# --- دکوریتور عضویت اجباری ---
+def channel_membership_required(func):
+    @wraps(func)
+    async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE, *args, **kwargs):
+        user = update.effective_user
+        if is_admin(user.id):
+            return await func(update, context, *args, **kwargs)
+
+        channel_id = get_setting("mandatory_channel")
+        if not channel_id or not channel_id.startswith('@'):
+            logger.warning("Mandatory channel not set or invalid.")
+            return await func(update, context, *args, **kwargs)
+        
+        try:
+            member = await context.bot.get_chat_member(chat_id=channel_id, user_id=user.id)
+            if member.status in [ChatMemberStatus.MEMBER, ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.CREATOR]:
+                return await func(update, context, *args, **kwargs)
+            else:
+                raise ValueError("User not a member")
+        except Exception:
+            channel_link = f"https://t.me/{channel_id.lstrip('@')}"
+            keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("عضویت در کانال", url=channel_link)]])
+            await update.effective_message.reply_text(
+                "برای استفاده از ربات، لطفا ابتدا در کانال ما عضو شوید و سپس دوباره تلاش کنید.",
+                reply_markup=keyboard
+            )
+            return
+    return wrapper
+
 # --- کیبوردهای ربات ---
 async def main_reply_keyboard(user_id):
     keyboard = [[KeyboardButton("💎 موجودی"), KeyboardButton("🚀 Self Pro")]]
@@ -248,6 +278,7 @@ async def font_selection_keyboard(user_id):
     return InlineKeyboardMarkup(keyboard)
 
 # --- دستورات اصلی ---
+@channel_membership_required
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user = update.effective_user
     get_user(user.id, user.username)
@@ -258,6 +289,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     return ConversationHandler.END
 
 # --- منطق خرید الماس ---
+@channel_membership_required
 async def buy_diamond_start_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("تعداد الماسی که قصد خرید دارید را وارد کنید:")
     return ASK_DIAMOND_AMOUNT
@@ -334,6 +366,7 @@ async def handle_transaction_approval(update: Update, context: ContextTypes.DEFA
 
 # --- منطق ورود به سلف (کامل و اصلاح شده) ---
 user_sessions = {}
+@channel_membership_required
 async def self_pro_menu_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = get_user(update.effective_user.id)
     if user['self_active']:
@@ -481,6 +514,7 @@ async def self_pro_background_task(user_id: int, client: Client):
     logger.info(f"Background task for user {user_id} stopped.")
 
 # --- بقیه توابع ---
+@channel_membership_required
 async def toggle_self_pause(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query; await query.answer()
     user = get_user(query.from_user.id)
@@ -490,10 +524,12 @@ async def toggle_self_pause(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer(f"ساعت با موفقیت {status_text} شد.")
     await query.edit_message_reply_markup(reply_markup=await self_pro_management_keyboard(query.from_user.id))
 
+@channel_membership_required
 async def change_font_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query; await query.answer()
     await query.edit_message_text("لطفا یک فونت برای نمایش زمان انتخاب کنید:", reply_markup=await font_selection_keyboard(query.from_user.id))
 
+@channel_membership_required
 async def set_font(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     font_style = query.data.replace("set_font_", "")
@@ -502,15 +538,18 @@ async def set_font(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer(f"فونت با موفقیت به {font_style} تغییر یافت.")
     await query.edit_message_reply_markup(reply_markup=await font_selection_keyboard(user_id))
 
+@channel_membership_required
 async def back_to_self_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query; await query.answer()
     await query.edit_message_text("⚙️ منوی مدیریت Self Pro:", reply_markup=await self_pro_management_keyboard(query.from_user.id))
 
+@channel_membership_required
 async def delete_self_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query; await query.answer()
     keyboard = [[InlineKeyboardButton(" بله، حذف کن", callback_data="delete_self_final"), InlineKeyboardButton(" خیر", callback_data="back_to_self_menu")]]
     await query.edit_message_text("آیا از حذف کامل سلف خود مطمئن هستید؟", reply_markup=InlineKeyboardMarkup(keyboard))
 
+@channel_membership_required
 async def delete_self_final(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user_id = query.from_user.id
@@ -524,6 +563,7 @@ async def delete_self_final(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer("سلف شما با موفقیت حذف شد.")
     await query.edit_message_text("سلف شما حذف شد.")
 
+@channel_membership_required
 async def check_balance_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_data = get_user(update.effective_user.id)
     toman_equivalent = user_data['balance'] * int(get_setting("diamond_price"))
@@ -532,6 +572,7 @@ async def check_balance_text_handler(update: Update, context: ContextTypes.DEFAU
             f"💳 معادل تخمینی: <b>{toman_equivalent:,} تومان</b>")
     await update.message.reply_text(text, parse_mode=ParseMode.HTML)
 
+@channel_membership_required
 async def referral_menu_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     bot_username = (await context.bot.get_me()).username
     referral_link = f"https://t.me/{bot_username}?start={update.effective_user.id}"
@@ -610,6 +651,7 @@ async def end_bet_on_timeout(context: ContextTypes.DEFAULT_TYPE):
             context.chat_data['users_in_bet'].discard(p_id)
     await context.bot.edit_message_text(chat_id=job_data['chat_id'], message_id=job_data['message_id'], text="⌛️ زمان شرط‌بندی تمام شد و مبلغ به شرکت‌کنندگان بازگردانده شد.")
 
+@channel_membership_required
 async def start_bet(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if 'users_in_bet' not in context.chat_data: context.chat_data['users_in_bet'] = set()
     creator = update.effective_user
@@ -637,6 +679,7 @@ async def start_bet(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.chat_data['bets'][bet_message.message_id] = bet_info
     context.chat_data['users_in_bet'].add(creator.id)
 
+@channel_membership_required
 async def join_bet(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query; user = query.from_user
     message_id = int(query.data.split("_")[-1])
@@ -672,6 +715,7 @@ async def cancel_bet(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.message.edit_text(f"🎲 شرط‌بندی توسط {get_user_handle(query.from_user)} لغو شد و مبلغ به شرکت‌کنندگان بازگردانده شد.")
     await query.answer("شرط با موفقیت لغو شد.")
 
+@channel_membership_required
 async def admin_panel_entry_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
         await update.message.reply_text("شما دسترسی به این بخش را ندارید."); return ConversationHandler.END
@@ -701,6 +745,7 @@ async def receive_setting(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("👑 پنل ادمین:", reply_markup=await admin_panel_keyboard())
     return ADMIN_PANEL_MAIN
 
+@channel_membership_required
 async def support_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     await update.message.reply_text("لطفا پیام خود را برای ارسال به پشتیبانی بنویسید.", reply_markup=ReplyKeyboardRemove())
     return AWAITING_SUPPORT_MESSAGE
@@ -797,6 +842,4 @@ if __name__ == "__main__":
     logger.info(f"Lock file created at {LOCK_FILE_PATH}")
     flask_thread = Thread(target=run_flask); flask_thread.daemon = True; flask_thread.start()
     main()
-
-" in "main.py". Please make changes so that the Telegram bot, which is a key part of the project, also has a mandatory channel membership feature added. This feature should ensure that only users who are members of a specified channel can interact with the bot. If a non-member tries to use the bot, they should be prompted to join the channel first, with a clear message and a button that links to the channel. This functionality should be integrated seamlessly into the existing command and message handlers. The channel ID should be configurable through the admin panel, building upon the existing "admin_set_channel" functionality. A new decorator or wrapper function should be created to apply this check to relevant handlers like 'start', 'self_pro_menu_text_handler', and others to avoid code duplication and maintain a clean, modular structure. I expect that you will carefully integrate this feature without disrupting the current functionalities, ensuring the bot remains stable and robust.
 
