@@ -622,7 +622,7 @@ async def check_balance_text_handler(update: Update, context: ContextTypes.DEFAU
 
 async def referral_menu_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     bot_username = (await context.bot.get_me()).username
-    referral_link = f"https://t.me/{bot_username}?start={update.effective_user.id}"
+    referral_link = f"https.t.me/{bot_username}?start={update.effective_user.id}"
     reward = get_setting("referral_reward")
     text = (f"🔗 لینک دعوت شما:\n`{referral_link}`\n\nبا هر دعوت موفق {reward} الماس هدیه بگیرید.")
     await update.message.reply_text(text, parse_mode=ParseMode.MARKDOWN)
@@ -701,10 +701,9 @@ async def resolve_bet_logic(chat_id: int, message_id: int, bet_info: dict, conte
         for p_id in bet_info['participants']:
             context.chat_data['users_in_bet'].discard(p_id)
 
-    # انتخاب برنده به صورت کاملاً تصادفی
+    # <<<< اصلاح شد: انتخاب برنده به صورت کاملاً تصادفی با random.choice >>>>
     participants_list = list(participants_data.keys())
-    random.shuffle(participants_list)
-    winner_id = participants_list[0]
+    winner_id = random.choice(participants_list)
     
     losers_data = {uid: udata for uid, udata in participants_data.items() if uid != winner_id}
     
@@ -713,16 +712,21 @@ async def resolve_bet_logic(chat_id: int, message_id: int, bet_info: dict, conte
     tax = math.ceil(total_pot * 0.05)
     prize = total_pot - tax
 
-    for loser_id in losers_data.keys(): update_user_balance(loser_id, bet_amount, add=False)
+    # موجودی بازنده‌ها کم شده و جایزه به برنده اضافه می‌شود
+    # توجه: موجودی برنده کم نمی‌شود، بلکه جایزه به آن اضافه می‌شود
+    for loser_id in losers_data.keys():
+        update_user_balance(loser_id, bet_amount, add=False)
+    
+    # جایزه به موجودی برنده اضافه می‌شود (مبلغ شرط خودش + مبلغ شرط بازنده‌ها - مالیات)
     update_user_balance(winner_id, prize, add=True)
 
     losers_text_list = [f"{get_user_handle(await context.bot.get_chat(uid))}" for uid in losers_data.keys()]
-    losers_text = ", ".join(losers_text_list)
+    losers_text = ", ".join(losers_text_list) if losers_text_list else "هیچ‌کس"
     
     result_text = (
         f"<b>◈ ━━━ 🎲 نتیجه شرط‌بندی 🎲 ━━━ ◈</b>\n<b>مبلغ شرط:</b> {bet_amount} الماس\n\n"
         f"🏆 <b>برنده:</b> {get_user_handle(await context.bot.get_chat(winner_id))}\n"
-        f"💔 <b>بازنده:</b> {losers_text}\n\n💰 <b>جایزه:</b> {prize} الماس\n🧾 <b>مالیات:</b> {tax} الماس\n"
+        f"💔 <b>بازنده(ها):</b> {losers_text}\n\n💰 <b>جایزه:</b> {prize} الماس\n🧾 <b>مالیات:</b> {tax} الماس\n"
         f"<b>◈ ━━━ Self Pro ━━━ ◈</b>"
     )
     await context.bot.edit_message_text(chat_id=chat_id, message_id=message_id, text=result_text, parse_mode=ParseMode.HTML)
@@ -757,6 +761,9 @@ async def start_bet(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if get_user(creator.id, creator.username)['balance'] < amount:
         await update.message.reply_text("موجودی شما برای شروع این شرط‌بندی کافی نیست."); return
+
+    # از موجودی شروع‌کننده کم می‌شود
+    update_user_balance(creator.id, amount, add=False)
 
     bet_info = { 'amount': amount, 'creator_id': creator.id, 'participants': {creator.id} }
     
@@ -798,9 +805,15 @@ async def join_bet(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer("شما در حال حاضر در یک شرط‌بندی دیگر فعال هستید.", show_alert=True); return
 
     bet_info = bets[message_id]
+    if user.id in bet_info['participants']:
+        await query.answer("شما قبلاً در این شرط شرکت کرده‌اید.", show_alert=True); return
+        
     if get_user(user.id, user.username)['balance'] < bet_info['amount']:
         await query.answer("موجودی شما برای شرکت در این شرط‌بندی کافی نیست.", show_alert=True); return
         
+    # کم کردن موجودی شرکت‌کننده دوم
+    update_user_balance(user.id, bet_info['amount'], add=False)
+
     bet_info['participants'].add(user.id)
     context.chat_data['users_in_bet'].add(user.id)
     
@@ -822,6 +835,10 @@ async def cancel_bet(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if query.from_user.id != bet_info['creator_id']:
         await query.answer("فقط شروع‌کننده می‌تواند شرط را لغو کند.", show_alert=True); return
 
+    # بازگرداندن مبلغ به شرکت‌کنندگان
+    for p_id in bet_info['participants']:
+        update_user_balance(p_id, bet_info['amount'], add=True)
+
     bet_info['job'].schedule_removal()
     
     if 'users_in_bet' in context.chat_data:
@@ -830,7 +847,7 @@ async def cancel_bet(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
     context.chat_data['bets'].pop(message_id, None)
 
-    await query.message.edit_text(f"🎲 شرط‌بندی توسط {get_user_handle(query.from_user)} لغو شد.")
+    await query.message.edit_text(f"🎲 شرط‌بندی توسط {get_user_handle(query.from_user)} لغو شد و مبلغ به شرکت‌کنندگان بازگردانده شد.")
     await query.answer("شرط با موفقیت لغو شد.")
 
 # --- پنل ادمین (مکالمه) ---
