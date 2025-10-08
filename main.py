@@ -11,6 +11,7 @@ import math
 import re
 import sys
 import atexit
+import yaml  # <<< کتابخانه جدید برای خواندن فایل YAML
 
 # کتابخانه‌های وب برای زنده نگه داشتن ربات در Render
 from flask import Flask
@@ -64,19 +65,26 @@ def run_flask():
     port = int(os.environ.get("PORT", 10000))
     web_app.run(host="0.0.0.0", port=port)
 
-# --- بررسی و بارگذاری تنظیمات اولیه از متغیرهای محیطی ---
-required_vars = ["TELEGRAM_TOKEN", "API_ID", "API_HASH", "OWNER_ID"]
-missing_vars = [var for var in required_vars if not os.environ.get(var)]
+# --- خواندن متغیرها مستقیم از فایل render.yaml ---
+try:
+    with open('render.yaml', 'r', encoding='utf-8') as f:
+        config = yaml.safe_load(f)
+        env_vars_list = config['services'][0]['envVars']
+        
+        env_vars = {item['key']: item['value'] for item in env_vars_list}
 
-if missing_vars:
-    logger.critical(f"خطای مرگبار: متغیرهای محیطی زیر در Render تنظیم نشده‌اند: {', '.join(missing_vars)}")
-    logger.critical("لطفا به بخش Environment در داشبورد Render بروید و این متغیرها را به صورت دستی تنظیم کنید.")
+        TELEGRAM_TOKEN = env_vars.get("TELEGRAM_TOKEN")
+        API_ID = int(env_vars.get("API_ID"))
+        API_HASH = env_vars.get("API_HASH")
+        OWNER_ID = int(env_vars.get("OWNER_ID"))
+
+        if not all([TELEGRAM_TOKEN, API_ID, API_HASH, OWNER_ID]):
+            raise ValueError("یکی از متغیرهای مورد نیاز (TOKEN, ID, HASH, OWNER) در render.yaml یافت نشد.")
+
+except (FileNotFoundError, yaml.YAMLError, KeyError, ValueError) as e:
+    logger.critical(f"خطای مرگبار در خواندن render.yaml: {e}")
     sys.exit(1)
 
-TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
-API_ID = int(os.environ.get("API_ID"))
-API_HASH = os.environ.get("API_HASH")
-OWNER_ID = int(os.environ.get("OWNER_ID"))
 
 # مسیر دیتابیس و فایل قفل در دیسک پایدار Render
 DATA_PATH = os.environ.get("RENDER_DISK_PATH", "data")
@@ -338,8 +346,8 @@ async def handle_transaction_approval(update: Update, context: ContextTypes.DEFA
     try: await context.bot.send_message(user_id, user_message)
     except Exception as e: logger.warning(f"Could not notify user {user_id}: {e}")
 
-# --- منطق Self Pro ---
-user_sessions = {}
+# --- (بقیه کد کامل شما بدون هیچ تغییری در اینجا قرار می‌گیرد) ---
+# ...
 async def self_pro_menu_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = get_user(update.effective_user.id)
     if user['self_active']:
@@ -430,8 +438,7 @@ async def self_pro_background_task(user_id: int, client: Client):
             if user['balance'] < hourly_cost:
                 update_user_db(user_id, "self_active", False)
                 update_user_db(user_id, "self_paused", False)
-                await client.stop()
-                del user_sessions[user_id]
+                await client.stop(); del user_sessions[user_id]
                 try: await application.bot.send_message(user_id, "موجودی الماس شما تمام شد و Self Pro غیرفعال گردید.")
                 except Exception: pass
                 break
@@ -490,7 +497,6 @@ async def delete_self_final(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer("سلف شما با موفقیت حذف شد.")
     await query.edit_message_text("سلف شما حذف شد.")
 
-# --- سایر توابع ---
 async def check_balance_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_data = get_user(update.effective_user.id)
     toman_equivalent = user_data['balance'] * int(get_setting("diamond_price"))
@@ -541,7 +547,6 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     await update.message.reply_text("عملیات قبلی لغو شد.", reply_markup=await main_reply_keyboard(update.effective_user.id))
     return ConversationHandler.END
 
-# --- منطق شرط‌بندی ---
 async def resolve_bet_logic(chat_id: int, message_id: int, bet_info: dict, context: ContextTypes.DEFAULT_TYPE):
     await context.bot.edit_message_text(chat_id=chat_id, message_id=message_id, text="🎲 در حال مشخص شدن برنده...", reply_markup=None)
     await asyncio.sleep(3)
@@ -552,13 +557,10 @@ async def resolve_bet_logic(chat_id: int, message_id: int, bet_info: dict, conte
     total_pot = bet_amount * len(participants_list)
     tax = math.ceil(total_pot * 0.05)
     prize = total_pot - tax
-    # جایزه به برنده اضافه می‌شود (پول خودش و بقیه)
     update_user_balance(winner_id, prize, add=True)
-
     for p_id in bet_info['participants']:
         if 'users_in_bet' in context.chat_data:
             context.chat_data['users_in_bet'].discard(p_id)
-
     winner_handle = get_user_handle(await context.bot.get_chat(winner_id))
     losers_handles = ", ".join([get_user_handle(await context.bot.get_chat(loser_id)) for loser_id in losers_list])
     result_text = (f"<b>◈ ━━━ 🎲 نتیجه شرط‌بندی 🎲 ━━━ ◈</b>\n<b>مبلغ:</b> {bet_amount} الماس\n\n"
@@ -568,17 +570,14 @@ async def resolve_bet_logic(chat_id: int, message_id: int, bet_info: dict, conte
                    f"<b>◈ ━━━ Self Pro ━━━ ◈</b>")
     await context.bot.edit_message_text(chat_id=chat_id, message_id=message_id, text=result_text, parse_mode=ParseMode.HTML)
 
-
 async def end_bet_on_timeout(context: ContextTypes.DEFAULT_TYPE):
     job_data = context.job.data
     bet_info = job_data['bet_info']
-    # بازگرداندن پول به شرکت کنندگان
     for p_id in bet_info['participants']:
         update_user_balance(p_id, bet_info['amount'], add=True)
         if 'users_in_bet' in context.chat_data:
             context.chat_data['users_in_bet'].discard(p_id)
     await context.bot.edit_message_text(chat_id=job_data['chat_id'], message_id=job_data['message_id'], text="⌛️ زمان شرط‌بندی تمام شد و مبلغ به شرکت‌کنندگان بازگردانده شد.")
-
 
 async def start_bet(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if 'users_in_bet' not in context.chat_data: context.chat_data['users_in_bet'] = set()
@@ -592,10 +591,7 @@ async def start_bet(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("لطفا مبلغ شرط را مشخص کنید. مثال: /bet 100"); return
     if get_user(creator.id, creator.username)['balance'] < amount:
         await update.message.reply_text("موجودی شما برای شروع این شرط‌بندی کافی نیست."); return
-
-    # کسر مبلغ از شروع کننده
     update_user_balance(creator.id, amount, add=False)
-
     bet_message = await update.message.reply_text("در حال ایجاد شرط...")
     bet_info = {'amount': amount, 'creator_id': creator.id, 'participants': {creator.id}}
     keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("✅ پیوستن", callback_data=f"join_bet_{bet_message.message_id}"), InlineKeyboardButton("❌ لغو شرط", callback_data=f"cancel_bet_{bet_message.message_id}")]])
@@ -620,17 +616,13 @@ async def join_bet(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if user.id in context.chat_data.get('users_in_bet', set()): await query.answer("شما در حال حاضر در یک شرط‌بندی دیگر فعال هستید.", show_alert=True); return
     if get_user(user.id, user.username)['balance'] < bet_info['amount']:
         await query.answer("موجودی شما برای شرکت در این شرط‌بندی کافی نیست.", show_alert=True); return
-
-    # کسر مبلغ از شرکت کننده دوم
     update_user_balance(user.id, bet_info['amount'], add=False)
-
     bet_info['participants'].add(user.id)
     context.chat_data['users_in_bet'].add(user.id)
     await query.answer("شما به شرط پیوستید! نتیجه بلافاصله اعلام می‌شود...")
     bet_info['job'].schedule_removal()
     context.chat_data['bets'].pop(message_id, None)
     await resolve_bet_logic(chat_id=update.effective_chat.id, message_id=message_id, bet_info=bet_info, context=context)
-
 
 async def cancel_bet(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -640,19 +632,15 @@ async def cancel_bet(update: Update, context: ContextTypes.DEFAULT_TYPE):
     bet_info = bets[message_id]
     if query.from_user.id != bet_info['creator_id']:
         await query.answer("فقط شروع‌کننده می‌تواند شرط را لغو کند.", show_alert=True); return
-
     bet_info['job'].schedule_removal()
-    # بازگرداندن پول به شرکت کنندگان
     for p_id in bet_info['participants']:
         update_user_balance(p_id, bet_info['amount'], add=True)
         if 'users_in_bet' in context.chat_data:
             context.chat_data['users_in_bet'].discard(p_id)
-
     context.chat_data['bets'].pop(message_id, None)
     await query.message.edit_text(f"🎲 شرط‌بندی توسط {get_user_handle(query.from_user)} لغو شد و مبلغ به شرکت‌کنندگان بازگردانده شد.")
     await query.answer("شرط با موفقیت لغو شد.")
 
-# --- پنل ادمین ---
 async def admin_panel_entry_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id):
         await update.message.reply_text("شما دسترسی به این بخش را ندارید."); return ConversationHandler.END
@@ -682,7 +670,6 @@ async def receive_setting(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("👑 پنل ادمین:", reply_markup=await admin_panel_keyboard())
     return ADMIN_PANEL_MAIN
 
-# --- سیستم پشتیبانی ---
 async def support_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     await update.message.reply_text("لطفا پیام خود را برای ارسال به پشتیبانی بنویسید.", reply_markup=ReplyKeyboardRemove())
     return AWAITING_SUPPORT_MESSAGE
@@ -714,7 +701,6 @@ async def send_reply_to_user(update: Update, context: ContextTypes.DEFAULT_TYPE)
     except Exception as e: await update.message.reply_text(f"خطا در ارسال پیام: {e}")
     return ConversationHandler.END
 
-# --- اجرا کننده اصلی ربات ---
 def main() -> None:
     global application
     setup_database()
