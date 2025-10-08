@@ -65,25 +65,12 @@ def run_flask():
     port = int(os.environ.get("PORT", 10000))
     web_app.run(host="0.0.0.0", port=port)
 
-# --- خواندن متغیرها مستقیم از فایل render.yaml ---
-try:
-    with open('render.yaml', 'r', encoding='utf-8') as f:
-        config = yaml.safe_load(f)
-        env_vars_list = config['services'][0]['envVars']
-        
-        env_vars = {item['key']: item['value'] for item in env_vars_list}
-
-        TELEGRAM_TOKEN = env_vars.get("TELEGRAM_TOKEN")
-        API_ID = int(env_vars.get("API_ID"))
-        API_HASH = env_vars.get("API_HASH")
-        OWNER_ID = int(env_vars.get("OWNER_ID"))
-
-        if not all([TELEGRAM_TOKEN, API_ID, API_HASH, OWNER_ID]):
-            raise ValueError("یکی از متغیرهای مورد نیاز در render.yaml یافت نشد.")
-
-except (FileNotFoundError, yaml.YAMLError, KeyError, ValueError) as e:
-    logger.critical(f"خطای مرگبار در خواندن render.yaml: {e}")
-    sys.exit(1)
+# --- متغیرهای ربات ---
+# مقادیر به صورت مستقیم در کد قرار داده شده‌اند
+TELEGRAM_TOKEN = "8493268938:AAE9hgHlgZUMNND0EyEZ5X44_M8NiWyU9q4"
+API_ID = 9536480
+API_HASH = "4e52f6f12c47a0da918009260b6e3d44"
+OWNER_ID = 7423552124
 
 
 # مسیر دیتابیس و فایل قفل در دیسک پایدار Render
@@ -806,4 +793,3 @@ if __name__ == "__main__":
     logger.info(f"Lock file created at {LOCK_FILE_PATH}")
     flask_thread = Thread(target=run_flask); flask_thread.daemon = True; flask_thread.start()
     main()
-
