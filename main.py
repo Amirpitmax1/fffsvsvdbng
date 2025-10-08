@@ -64,22 +64,15 @@ def run_flask():
     port = int(os.environ.get("PORT", 10000))
     web_app.run(host="0.0.0.0", port=port)
 
-# --- بررسی و بارگذاری تنظیمات اولیه ---
-# <<< اصلاح شد: بررسی وجود متغیرهای محیطی قبل از اجرای ربات >>>
-required_vars = ["TELEGRAM_TOKEN", "API_ID", "API_HASH", "OWNER_ID"]
-missing_vars = [var for var in required_vars if not os.environ.get(var)]
-
-if missing_vars:
-    logger.critical(f"خطای مرگبار: متغیرهای محیطی زیر در Render تنظیم نشده‌اند: {', '.join(missing_vars)}")
-    logger.critical("لطفا به بخش Environment در داشبورد Render بروید و این متغیرها را تنظیم کنید.")
-    sys.exit(1) # خروج از برنامه با خطا
-
-TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
-API_ID = int(os.environ.get("API_ID"))
-API_HASH = os.environ.get("API_HASH")
-OWNER_ID = int(os.environ.get("OWNER_ID"))
+# --- <<< مقادیر به صورت مستقیم در کد وارد شدند >>> ---
+# هشدار: این روش امن نیست. بهتر است از متغیرهای محیطی استفاده کنید.
+TELEGRAM_TOKEN = "7998966950:AAGEaASYQ8S16ADyl0x5-ucSe2oWPpJHMbg"
+API_ID = 9536480
+API_HASH = "4e52f6f12c47a0da918009260b6e3d44"
+OWNER_ID = 7423552124
 
 # مسیر دیتابیس و فایل قفل در دیسک پایدار Render
+# این بخش هنوز به متغیر محیطی Render نیاز دارد
 DATA_PATH = os.environ.get("RENDER_DISK_PATH", "data")
 DB_PATH = os.path.join(DATA_PATH, "bot_database.db")
 SESSION_PATH = DATA_PATH
