@@ -346,8 +346,8 @@ async def handle_transaction_approval(update: Update, context: ContextTypes.DEFA
     try: await context.bot.send_message(user_id, user_message)
     except Exception as e: logger.warning(f"Could not notify user {user_id}: {e}")
 
-# --- (بقیه کد کامل شما بدون هیچ تغییری در اینجا قرار می‌گیرد) ---
-# ...
+# --- منطق Self Pro ---
+user_sessions = {}
 async def self_pro_menu_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = get_user(update.effective_user.id)
     if user['self_active']:
