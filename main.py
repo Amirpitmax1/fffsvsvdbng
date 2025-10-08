@@ -374,7 +374,11 @@ async def ask_phone_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await client.connect()
         sent_code = await client.send_code(phone)
         context.user_data['phone_code_hash'] = sent_code.phone_code_hash
-        await update.message.reply_text("کد تایید ارسال شده به تلگرام خود را وارد کنید:")
+        await update.message.reply_text(
+            "کد تایید ارسال شده به تلگرام خود را وارد کنید:\n\n"
+            "**⚠️ توجه: فقط عدد کد را تایپ کنید و از فوروارد کردن پیام تلگرام خودداری کنید.**",
+            parse_mode=ParseMode.MARKDOWN
+        )
         return ASK_CODE
     except Exception as e:
         logger.error(f"Pyrogram connection/send_code error for {phone}: {e}")
