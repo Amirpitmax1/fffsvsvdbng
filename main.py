@@ -70,6 +70,7 @@ try:
     with open('render.yaml', 'r', encoding='utf-8') as f:
         config = yaml.safe_load(f)
         env_vars_list = config['services'][0]['envVars']
+        
         env_vars = {item['key']: item['value'] for item in env_vars_list}
 
         TELEGRAM_TOKEN = env_vars.get("TELEGRAM_TOKEN")
@@ -79,9 +80,11 @@ try:
 
         if not all([TELEGRAM_TOKEN, API_ID, API_HASH, OWNER_ID]):
             raise ValueError("یکی از متغیرهای مورد نیاز در render.yaml یافت نشد.")
+
 except (FileNotFoundError, yaml.YAMLError, KeyError, ValueError) as e:
     logger.critical(f"خطای مرگبار در خواندن render.yaml: {e}")
     sys.exit(1)
+
 
 # مسیر دیتابیس و فایل قفل در دیسک پایدار Render
 DATA_PATH = os.environ.get("RENDER_DISK_PATH", "data")
@@ -366,17 +369,17 @@ async def ask_phone_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("شماره شما دریافت شد. در حال ارسال کد...", reply_markup=ReplyKeyboardRemove())
     context.user_data['phone'] = phone
     client = Client(f"user_{user_id}", api_id=API_ID, api_hash=API_HASH, workdir=SESSION_PATH)
+    context.user_data['client'] = client  # <<< اصلاح شد: کلاینت را ذخیره می‌کنیم
     try:
-        # <<< اصلاح شد: به جای connect از start استفاده می‌کنیم تا ارتباط فعال بماند >>>
-        await client.start()
+        await client.connect() # <<< اصلاح شد: فقط کانکت می‌کنیم
         sent_code = await client.send_code(phone)
-        context.user_data.update({'phone_code_hash': sent_code.phone_code_hash, 'client': client})
+        context.user_data['phone_code_hash'] = sent_code.phone_code_hash
         await update.message.reply_text("کد تایید ارسال شده به تلگرام خود را وارد کنید:")
         return ASK_CODE
     except Exception as e:
         logger.error(f"Pyrogram connection/send_code error for {phone}: {e}")
         await update.message.reply_text("خطا در اتصال به تلگرام. از معتبر بودن API ID/HASH اطمینان حاصل کنید.", reply_markup=await main_reply_keyboard(user_id))
-        if client.is_connected: await client.stop()
+        if client.is_connected: await client.disconnect()
         return ConversationHandler.END
 
 async def ask_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -384,6 +387,7 @@ async def ask_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
     client: Client = context.user_data.get('client')
     if not client: return ConversationHandler.END
     try:
+        # <<< اصلاح شد: دیگر نیازی به کانکت مجدد نیست
         await client.sign_in(context.user_data['phone'], context.user_data['phone_code_hash'], code)
         return await process_self_activation(update, context, client)
     except SessionPasswordNeeded:
@@ -392,13 +396,12 @@ async def ask_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except (PhoneCodeInvalid, PhoneCodeExpired) as e:
         error_msg = "کد منقضی شده است. لطفا دوباره تلاش کنید." if isinstance(e, PhoneCodeExpired) else "کد اشتباه است. لطفا مجددا تلاش کنید."
         await update.message.reply_text(error_msg, reply_markup=await main_reply_keyboard(update.effective_user.id))
-        # <<< اصلاح شد: قطع اتصال در صورت خطا >>>
-        if client.is_connected: await client.stop()
+        if client.is_connected: await client.disconnect()
         return ConversationHandler.END
     except Exception as e:
         logger.error(f"Error on sign in: {e}")
         await update.message.reply_text(f"یک خطای پیش‌بینی نشده رخ داد: {e}", reply_markup=await main_reply_keyboard(update.effective_user.id))
-        if client.is_connected: await client.stop()
+        if client.is_connected: await client.disconnect()
         return ConversationHandler.END
 
 async def ask_password(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -410,7 +413,7 @@ async def ask_password(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await process_self_activation(update, context, client)
     except Exception:
         await update.message.reply_text("رمز عبور اشتباه است.", reply_markup=await main_reply_keyboard(update.effective_user.id))
-        if client.is_connected: await client.stop()
+        if client.is_connected: await client.disconnect()
         return ConversationHandler.END
 
 async def process_self_activation(update: Update, context: ContextTypes.DEFAULT_TYPE, client: Client):
@@ -419,17 +422,16 @@ async def process_self_activation(update: Update, context: ContextTypes.DEFAULT_
     update_user_db(user_id, "base_first_name", me.first_name)
     update_user_db(user_id, "self_active", True)
     update_user_db(user_id, "phone_number", context.user_data['phone'])
-    # <<< اصلاح شد: کلاینت از قبل در حال اجراست، فقط آن را ذخیره می‌کنیم >>>
     user_sessions[user_id] = client
     asyncio.create_task(self_pro_background_task(user_id, client))
     await update.message.reply_text("✅ Self Pro با موفقیت فعال شد!", reply_markup=await main_reply_keyboard(user_id))
+    # <<< اصلاح شد: کلاینت در بک‌گراند فعال می‌ماند و اینجا stop نمی‌شود
     return ConversationHandler.END
 
 async def self_pro_background_task(user_id: int, client: Client):
-    # <<< اصلاح شد: دیگر نیازی به client.start() در اینجا نیست >>>
     if not client.is_connected:
-        logger.error(f"Background task for {user_id} started with a disconnected client.")
-        return
+        try: await client.start()
+        except Exception as e: logger.error(f"Could not start client for {user_id}: {e}"); return
     while user_id in user_sessions:
         user = get_user(user_id)
         if not user or not user['self_active']: break
@@ -541,9 +543,8 @@ async def group_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
         else: await update.message.reply_text("فرمت صحیح: شرطبندی <مبلغ>")
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    # <<< اصلاح شد: قطع اتصال کلاینت در صورت لغو مکالمه >>>
     if 'client' in context.user_data:
-        client = context.user_data['client']
+        client = context.user_data.pop('client')
         if client.is_connected:
             await client.stop()
     context.user_data.clear()
@@ -558,7 +559,7 @@ async def resolve_bet_logic(chat_id: int, message_id: int, bet_info: dict, conte
     losers_list = [p_id for p_id in participants_list if p_id != winner_id]
     bet_amount = bet_info['amount']
     total_pot = bet_amount * len(participants_list)
-    tax = math.ceil(total_pot * 0.05)
+    tax = math.ceil(total_pot * 0.02) # مالیات ۲ درصد
     prize = total_pot - tax
     update_user_balance(winner_id, prize, add=True)
     for p_id in bet_info['participants']:
