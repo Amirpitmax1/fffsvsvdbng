@@ -12,6 +12,9 @@ import re
 import sys
 import atexit
 from functools import wraps
+import time
+import traceback
+import html
 
 # کتابخانه‌های وب برای زنده نگه داشتن ربات در Render
 from flask import Flask
@@ -33,7 +36,8 @@ from telegram.ext import (
     CallbackQueryHandler,
     ConversationHandler,
     ContextTypes,
-    filters
+    filters,
+    PicklePersistence
 )
 from telegram.constants import ParseMode, ChatMemberStatus
 
@@ -55,6 +59,36 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
 )
 logger = logging.getLogger(__name__)
+
+# --- Error Handler ---
+async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Log the error and send a telegram message to notify the developer."""
+    logger.error(f"Exception while handling an update:", exc_info=context.error)
+
+    try:
+        # Preparing the error message
+        tb_list = traceback.format_exception(None, context.error, context.error.__traceback__)
+        tb_string = "".join(tb_list)
+        
+        update_str = update.to_dict() if isinstance(update, Update) else str(update)
+        
+        message = (
+            f"An exception was raised while handling an update\n"
+            f"<pre>update = {html.escape(str(update_str))}</pre>\n\n"
+            f"<pre>context.chat_data = {html.escape(str(context.chat_data))}</pre>\n\n"
+            f"<pre>context.user_data = {html.escape(str(context.user_data))}</pre>\n\n"
+            f"<pre>{html.escape(tb_string)}</pre>"
+        )
+        
+        # Split message into chunks to avoid hitting Telegram's message size limit
+        for i in range(0, len(message), 4096):
+            await context.bot.send_message(
+                chat_id=OWNER_ID, text=message[i:i+4096], parse_mode=ParseMode.HTML
+            )
+            
+    except Exception as e:
+        logger.error(f"Failed to send error notification to owner: {e}")
+
 
 # --- بخش وب سرور برای Ping ---
 web_app = Flask(__name__)
@@ -519,12 +553,12 @@ async def process_self_activation(update: Update, context: ContextTypes.DEFAULT_
     update_user_db(user_id, "self_active", True)
     update_user_db(user_id, "phone_number", context.user_data['phone'])
     user_sessions[user_id] = client
-    asyncio.create_task(self_pro_background_task(user_id, client))
+    asyncio.create_task(self_pro_background_task(user_id, client, application))
     await update.message.reply_text("✅ Self Pro با موفقیت فعال شد!", reply_markup=await main_reply_keyboard(user_id))
     context.user_data.clear()
     return ConversationHandler.END
 
-async def self_pro_background_task(user_id: int, client: Client):
+async def self_pro_background_task(user_id: int, client: Client, application: Application):
     try:
         if not client.is_connected:
             try:
@@ -566,7 +600,7 @@ async def self_pro_background_task(user_id: int, client: Client):
                 await asyncio.sleep(60)
             except Exception as e:
                 logger.error(f"Error inside self_pro_background_task loop for user {user_id}: {e}", exc_info=True)
-                await asyncio.sleep(60)  # prevent fast error loops
+                await asyncio.sleep(60)
     except Exception as e:
         logger.error(f"Critical error in self_pro_background_task for user {user_id}: {e}", exc_info=True)
     finally:
@@ -614,14 +648,12 @@ async def delete_self_final(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = query.from_user.id
     user_data = get_user(user_id)
     
-    # Restore original name before deleting session
     if user_id in user_sessions:
         client = user_sessions[user_id]
         try:
             if not client.is_connected:
                 await client.start()
             
-            # Restore names only if they exist in the database
             first_name_to_restore = user_data['base_first_name'] if user_data['base_first_name'] else ""
             last_name_to_restore = user_data['base_last_name'] if user_data['base_last_name'] else ""
             
@@ -635,14 +667,13 @@ async def delete_self_final(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await client.stop()
             user_sessions.pop(user_id, None)
 
-    # Clean up session file and database flags
     session_file = os.path.join(SESSION_PATH, f"user_{user_id}.session")
     if os.path.exists(session_file):
         os.remove(session_file)
         
     update_user_db(user_id, 'self_active', False)
     update_user_db(user_id, 'self_paused', False)
-    update_user_db(user_id, 'base_first_name', None) # Clear stored names
+    update_user_db(user_id, 'base_first_name', None)
     update_user_db(user_id, 'base_last_name', None)
 
     await query.answer("سلف شما با موفقیت حذف شد و نام شما بازیابی گردید.")
@@ -897,7 +928,15 @@ async def send_reply_to_user(update: Update, context: ContextTypes.DEFAULT_TYPE)
 def main() -> None:
     global application
     setup_database()
-    application = Application.builder().token(TELEGRAM_TOKEN).build()
+    
+    persistence = PicklePersistence(filepath=os.path.join(DATA_PATH, "bot_persistence.pickle"))
+    
+    application = Application.builder().token(TELEGRAM_TOKEN).persistence(persistence).build()
+    
+    # Add the error handler
+    application.add_error_handler(error_handler)
+
+
     main_menu_pattern = '^💎 موجودی$|^🚀 Self Pro$|^💰 افزایش موجودی$|^🎁 کسب جم رایگان$|^👑 پنل ادمین$|^💬 پشتیبانی$'
     conv_handler = ConversationHandler(
         entry_points=[
@@ -928,6 +967,8 @@ def main() -> None:
         },
         fallbacks=[MessageHandler(filters.Regex(main_menu_pattern), start), CommandHandler("cancel", cancel)],
         allow_reentry=True,
+        persistent=True,
+        name="main_conversation"
     )
     application.add_handler(CommandHandler("start", start))
     application.add_handler(conv_handler)
@@ -954,13 +995,24 @@ def cleanup_lock_file():
         logger.info("Lock file removed.")
 
 if __name__ == "__main__":
+    # Wait a moment to allow the old process to fully terminate, crucial for Render deploys
+    logger.info("Waiting for 2 seconds before acquiring lock...")
+    time.sleep(2)
+
     if os.path.exists(LOCK_FILE_PATH):
-        logger.warning("Lock file exists. Another instance might be running or crashed. Removing stale lock file.")
-        cleanup_lock_file()
+        logger.critical(f"Lock file {LOCK_FILE_PATH} exists, another instance is running. Exiting.")
+        sys.exit(1)
         
-    with open(LOCK_FILE_PATH, "w") as f: f.write(str(os.getpid()))
-    atexit.register(cleanup_lock_file)
-    logger.info(f"Lock file created at {LOCK_FILE_PATH}")
-    flask_thread = Thread(target=run_flask); flask_thread.daemon = True; flask_thread.start()
-    main()
+    try:
+        with open(LOCK_FILE_PATH, "w") as f:
+            f.write(str(os.getpid()))
+        atexit.register(cleanup_lock_file)
+        logger.info(f"Lock file created at {LOCK_FILE_PATH}")
+        
+        flask_thread = Thread(target=run_flask)
+        flask_thread.daemon = True
+        flask_thread.start()
+        main()
+    finally:
+        cleanup_lock_file()
 
