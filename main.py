@@ -27,10 +27,9 @@ from telegram import (
     ReplyKeyboardMarkup,
     KeyboardButton,
     User,
-    ReplyKeyboardRemove,
-    Bot
+    ReplyKeyboardRemove
 )
-from telegram.error import Conflict, Forbidden
+from telegram.error import Conflict
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -67,16 +66,9 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
     """Handle errors, log them, and gracefully shut down on Conflict."""
     # Handle Conflict errors by shutting down this instance
     if isinstance(context.error, Conflict):
-        logger.warning(
-            "Conflict error from Telegram API. This means another instance of the bot is running. "
-            "This instance will now attempt a graceful shutdown."
-        )
-        # Check if the application is running before trying to stop it to avoid RuntimeError.
-        if context.application.running:
-            await context.application.stop()
-            logger.info("Application shutdown initiated due to conflict.")
-        else:
-            logger.warning("Application was already not running. No shutdown action needed.")
+        logger.warning("Conflict error detected. This instance will stop polling gracefully.")
+        # This is the correct way to stop the application from within an error handler
+        asyncio.create_task(context.application.stop_polling())
         return
 
     # Log other errors
@@ -121,8 +113,8 @@ def run_flask():
 # --- متغیرهای ربات ---
 # مقادیر به صورت مستقیم در کد قرار داده شده‌اند
 TELEGRAM_TOKEN = "7422142910:AAHJvdDSWpsiFRo7WRCEhsVL1oFWooefl5w"
-API_ID = 24218762
-API_HASH = "19695584ae95ea9bc5e1483e15b486a7"
+API_ID = 9536480
+API_HASH = "4e52f6f12c47a0da918009260b6e3d44"
 OWNER_ID = 7423552124
 
 
@@ -141,9 +133,8 @@ os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
     ADMIN_PANEL_MAIN, SETTING_PRICE, SETTING_INITIAL_BALANCE,
     SETTING_SELF_COST, SETTING_CHANNEL_LINK, SETTING_REFERRAL_REWARD,
     SETTING_PAYMENT_CARD, ADMIN_ADD, ADMIN_REMOVE,
-    AWAITING_SUPPORT_MESSAGE, AWAITING_ADMIN_REPLY,
-    AWAITING_BROADCAST_MESSAGE
-) = range(17)
+    AWAITING_SUPPORT_MESSAGE, AWAITING_ADMIN_REPLY
+) = range(16)
 
 # --- استایل‌های فونت ---
 FONT_STYLES = {
@@ -243,14 +234,6 @@ def get_user(user_id, username=None):
     con.close()
     return user
 
-def get_all_user_ids():
-    """Fetches all user IDs from the database."""
-    con, cur = db_connect()
-    cur.execute("SELECT user_id FROM users")
-    user_ids = [row['user_id'] for row in cur.fetchall()]
-    con.close()
-    return user_ids
-
 def update_user_db(user_id, column, value):
     con, cur = db_connect()
     cur.execute(f"UPDATE users SET {column} = ? WHERE user_id = ?", (value, user_id))
@@ -334,8 +317,6 @@ async def admin_panel_keyboard():
     channel_lock_text = "✅ قفل کانال: فعال" if is_channel_lock_enabled else "❌ قفل کانال: غیرفعال"
     
     keyboard = [
-        [InlineKeyboardButton("📊 آمار کاربران", callback_data="admin_stats")],
-        [InlineKeyboardButton("📤 ارسال پیام همگانی", callback_data="admin_broadcast")],
         [InlineKeyboardButton("💎 تنظیم قیمت الماس", callback_data="admin_set_price")],
         [InlineKeyboardButton("💰 تنظیم موجودی اولیه", callback_data="admin_set_initial_balance")],
         [InlineKeyboardButton("🚀 تنظیم هزینه سلف", callback_data="admin_set_self_cost")],
@@ -474,7 +455,6 @@ async def start_self_activation_flow(update: Update, context: ContextTypes.DEFAU
 async def ask_phone_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
     phone = f"+{update.message.contact.phone_number.lstrip('+')}"
     user_id = update.effective_user.id
-    logger.info(f"Starting self-activation for user {user_id} with phone {phone}")
 
     session_file = os.path.join(SESSION_PATH, f"user_{user_id}.session")
     if os.path.exists(session_file):
@@ -487,32 +467,23 @@ async def ask_phone_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("شماره شما دریافت شد. در حال ارسال کد...", reply_markup=ReplyKeyboardRemove())
     context.user_data['phone'] = phone
     
-    logger.info(f"Attempting to create Pyrogram client for user {user_id}")
     client = Client(
         f"user_{user_id}",
         api_id=API_ID,
         api_hash=API_HASH,
         workdir=SESSION_PATH,
-        device_model="iPhone 13 Pro Max",
-        system_version="iOS 16.1",
-        app_version="8.9.1"
+        device_model="Samsung SM-A528B",
+        system_version="SDK 33",
+        app_version="10.8.0"
     )
     context.user_data['client'] = client
     
     try:
-        logger.info(f"Connecting client for user {user_id}")
         await client.connect()
-        logger.info(f"Sending code to {phone} for user {user_id}")
         sent_code = await client.send_code(phone)
         context.user_data['phone_code_hash'] = sent_code.phone_code_hash
-        logger.info(f"Successfully sent code to {phone}. Phone code hash stored.")
         
-        await update.message.reply_text(
-            "کد تایید به حساب تلگرام شما ارسال شد.\n\n"
-            "لطفاً به برنامه تلگرام خود بروید، کد را ببینید و سپس به اینجا برگشته و **کد را بصورت دستی تایپ کنید.**\n\n"
-            "❌ **هشدار:** به هیچ وجه پیام حاوی کد را فوروارد یا کپی نکنید. فقط عدد آن را تایپ کنید.",
-            parse_mode=ParseMode.MARKDOWN
-        )
+        await update.message.reply_text("کد تایید ارسال شده به تلگرام خود را وارد کنید:")
         return ASK_CODE
     except Exception as e:
         logger.error(f"Pyrogram connection/send_code error for {phone}: {e}", exc_info=True)
@@ -521,68 +492,45 @@ async def ask_phone_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return ConversationHandler.END
 
 async def ask_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Clean the input to get only digits
-    raw_code = update.message.text.strip()
-    code = re.sub(r'[^0-9]', '', raw_code)
-
-    if not code:
-        await update.message.reply_text("ورودی نامعتبر است. لطفا **فقط عدد** کد تایید را وارد کنید.")
-        return ASK_CODE
-
+    code = update.message.text.strip()
     user_id = update.effective_user.id
     client: Client = context.user_data.get('client')
-    logger.info(f"Received code '{code}' from user {user_id}. Attempting sign-in.")
 
     if not client:
-        await update.message.reply_text("خطای داخلی رخ داد (session lost). لطفا با /cancel دوباره شروع کنید.", reply_markup=await main_reply_keyboard(user_id))
+        await update.message.reply_text("خطای داخلی رخ داد. لطفا دوباره شروع کنید.", reply_markup=await main_reply_keyboard(user_id))
         return ConversationHandler.END
 
     try:
-        # The client should already be connected from the previous step.
-        # If not, it's a sign of an issue, but we can try connecting again.
         if not client.is_connected:
-            logger.warning(f"Client for {user_id} was not connected. Reconnecting before sign-in.")
             await client.connect()
 
-        logger.info(f"Calling client.sign_in for user {user_id}.")
         await client.sign_in(
             context.user_data['phone'],
             context.user_data['phone_code_hash'],
             code
         )
-        logger.info(f"Sign-in successful for user {user_id}. Proceeding to activation.")
         return await process_self_activation(update, context, client)
 
     except SessionPasswordNeeded:
-        logger.warning(f"2FA password needed for user {user_id}.")
         await update.message.reply_text("این اکانت دارای تایید دو مرحله‌ای است. لطفا رمز عبور خود را وارد کنید:")
         return ASK_PASSWORD
 
-    except (PhoneCodeInvalid, PhoneNumberInvalid) as e:
-        logger.warning(f"Phone code or number invalid for user {user_id}. Error: {e}")
-        await update.message.reply_text("کد یا شماره تلفن اشتباه است. لطفا دوباره تلاش کنید.")
-        return ASK_CODE
-
-    except PhoneCodeExpired:
-        logger.warning(f"Phone code expired for user {user_id}.")
-        await update.message.reply_text("کد تایید منقضی شده است. لطفا فرآیند را با /cancel لغو کرده و دوباره شروع کنید.", reply_markup=await main_reply_keyboard(user_id))
-        if client.is_connected:
-            await client.disconnect()
+    except (PhoneCodeInvalid, PhoneCodeExpired) as e:
+        msg = "کد تایید منقضی شده است." if isinstance(e, PhoneCodeExpired) else "کد تایید اشتباه است."
+        await update.message.reply_text(f"{msg} لطفا با زدن /cancel فرآیند را از ابتدا شروع کنید.", reply_markup=await main_reply_keyboard(user_id))
+        if client.is_connected: await client.disconnect()
         return ConversationHandler.END
 
     except Exception as e:
         logger.error(f"An unexpected error occurred during sign-in for user {user_id}: {e}", exc_info=True)
         await update.message.reply_text(f"یک خطای پیش‌بینی نشده رخ داد: {e}\nلطفا دوباره تلاش کنید.", reply_markup=await main_reply_keyboard(user_id))
-        if client.is_connected:
-            await client.disconnect()
+        if client.is_connected: await client.disconnect()
         return ConversationHandler.END
-
 
 async def ask_password(update: Update, context: ContextTypes.DEFAULT_TYPE):
     password = update.message.text
     user_id = update.effective_user.id
     client: Client = context.user_data.get('client')
-    logger.info(f"Received password from user {user_id}. Attempting to check password.")
 
     if not client:
         await update.message.reply_text("یک خطای داخلی رخ داده است. لطفا با /cancel مجدَد تلاش کنید.", reply_markup=await main_reply_keyboard(user_id))
@@ -593,12 +541,12 @@ async def ask_password(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await client.connect()
             
         await client.check_password(password)
-        logger.info(f"Password check successful for user {user_id}. Proceeding to activation.")
         return await process_self_activation(update, context, client)
 
     except PasswordHashInvalid:
-        await update.message.reply_text("رمز عبور اشتباه است. لطفا دوباره تلاش کنید یا برای لغو /cancel را بزنید.")
-        return ASK_PASSWORD # Allow user to re-enter the password
+        await update.message.reply_text("رمز عبور اشتباه است. لطفا با زدن /cancel فرآیند را از ابتدا شروع کنید.", reply_markup=await main_reply_keyboard(user_id))
+        if client.is_connected: await client.disconnect()
+        return ConversationHandler.END
 
     except Exception as e:
         logger.error(f"An unexpected error occurred during check_password for user {user_id}: {e}", exc_info=True)
@@ -775,7 +723,6 @@ async def handle_transfer(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"👥 <b>به:</b> {get_user_handle(receiver)}\n"
             f"💎 <b>مبلغ:</b> {amount} الماس")
     await update.message.reply_text(text, parse_mode=ParseMode.HTML)
-
 
 async def group_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or not update.message.text or update.effective_chat.type not in ['group', 'supergroup']: return
@@ -1064,22 +1011,6 @@ if __name__ == "__main__":
         sys.exit(0)
         
     try:
-        # --- NEW CODE ---
-        # On startup, forcefully log out any other running instances.
-        # This is the key to solving the 409 Conflict error on Render deploys.
-        async def force_logout_previous_instance():
-            try:
-                # We need a temporary bot instance to call log_out
-                temp_bot = Bot(token=TELEGRAM_TOKEN)
-                await temp_bot.log_out()
-                logger.info("Successfully logged out any previous bot instances.")
-            except Exception as e:
-                logger.error(f"Could not log out previous instances: {e}")
-
-        logger.info("Attempting to log out previous instances to prevent conflicts...")
-        asyncio.run(force_logout_previous_instance())
-        # --- END NEW CODE ---
-
         with open(LOCK_FILE_PATH, "w") as f:
             f.write(str(os.getpid()))
         atexit.register(cleanup_lock_file)
@@ -1091,3 +1022,4 @@ if __name__ == "__main__":
         main()
     finally:
         cleanup_lock_file()
+
