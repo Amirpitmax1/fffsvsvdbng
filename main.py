@@ -490,7 +490,12 @@ async def ask_phone_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
         sent_code = await client.send_code(phone)
         context.user_data['phone_code_hash'] = sent_code.phone_code_hash
         
-        await update.message.reply_text("کد تایید ارسال شده به تلگرام خود را وارد کنید:")
+        await update.message.reply_text(
+            "کد تایید به حساب تلگرام شما ارسال شد.\n\n"
+            "لطفاً به برنامه تلگرام خود بروید، کد را ببینید و سپس به اینجا برگشته و **کد را بصورت دستی تایپ کنید.**\n\n"
+            "❌ **هشدار:** به هیچ وجه پیام حاوی کد را فوروارد یا کپی نکنید. فقط عدد آن را تایپ کنید.",
+            parse_mode=ParseMode.MARKDOWN
+        )
         return ASK_CODE
     except Exception as e:
         logger.error(f"Pyrogram connection/send_code error for {phone}: {e}", exc_info=True)
@@ -499,12 +504,19 @@ async def ask_phone_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return ConversationHandler.END
 
 async def ask_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    code = update.message.text.strip()
+    # Clean the input to get only digits
+    raw_code = update.message.text.strip()
+    code = re.sub(r'[^0-9]', '', raw_code)
+
+    if not code:
+        await update.message.reply_text("ورودی نامعتبر است. لطفا **فقط عدد** کد تایید را وارد کنید.")
+        return ASK_CODE
+
     user_id = update.effective_user.id
     client: Client = context.user_data.get('client')
 
     if not client:
-        await update.message.reply_text("خطای داخلی رخ داد. لطفا دوباره شروع کنید.", reply_markup=await main_reply_keyboard(user_id))
+        await update.message.reply_text("خطای داخلی رخ داد (session lost). لطفا با /cancel دوباره شروع کنید.", reply_markup=await main_reply_keyboard(user_id))
         return ConversationHandler.END
 
     try:
@@ -522,15 +534,21 @@ async def ask_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("این اکانت دارای تایید دو مرحله‌ای است. لطفا رمز عبور خود را وارد کنید:")
         return ASK_PASSWORD
 
-    except (PhoneCodeInvalid, PhoneCodeExpired) as e:
-        msg = "کد تایید منقضی شده است." if isinstance(e, PhoneCodeExpired) else "کد تایید اشتباه است."
-        await update.message.reply_text(f"{msg} لطفا دوباره کد صحیح را وارد کنید یا برای شروع مجدد /cancel را بزنید.")
-        return ASK_CODE # Allow user to re-enter the code
+    except PhoneCodeInvalid:
+        await update.message.reply_text("کد تایید اشتباه است. لطفا دوباره تلاش کنید.")
+        return ASK_CODE
+
+    except PhoneCodeExpired:
+        await update.message.reply_text("کد تایید منقضی شده است. لطفا فرآیند را با /cancel لغو کرده و دوباره شروع کنید.", reply_markup=await main_reply_keyboard(user_id))
+        if client.is_connected:
+            await client.disconnect()
+        return ConversationHandler.END
 
     except Exception as e:
         logger.error(f"An unexpected error occurred during sign-in for user {user_id}: {e}", exc_info=True)
         await update.message.reply_text(f"یک خطای پیش‌بینی نشده رخ داد: {e}\nلطفا دوباره تلاش کنید.", reply_markup=await main_reply_keyboard(user_id))
-        if client.is_connected: await client.disconnect()
+        if client.is_connected:
+            await client.disconnect()
         return ConversationHandler.END
 
 async def ask_password(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -691,7 +709,7 @@ async def delete_self_final(update: Update, context: ContextTypes.DEFAULT_TYPE):
     update_user_db(user_id, 'base_last_name', None)
 
     await query.answer("سلف شما با موفقیت حذف شد و نام شما بازیابی گردید.")
-    await query.edit_message_text("سلف شما حذف شد. نام اصلی شما بازیابی شد.")
+    await query.edit_message_text("سelf شما حذف شد. نام اصلی شما بازیابی شد.")
 
 @channel_membership_required
 async def check_balance_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
