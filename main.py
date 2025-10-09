@@ -133,8 +133,9 @@ os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
     ADMIN_PANEL_MAIN, SETTING_PRICE, SETTING_INITIAL_BALANCE,
     SETTING_SELF_COST, SETTING_CHANNEL_LINK, SETTING_REFERRAL_REWARD,
     SETTING_PAYMENT_CARD, ADMIN_ADD, ADMIN_REMOVE,
-    AWAITING_SUPPORT_MESSAGE, AWAITING_ADMIN_REPLY
-) = range(16)
+    AWAITING_SUPPORT_MESSAGE, AWAITING_ADMIN_REPLY,
+    SELECT_FONT # New state for login flow
+) = range(17)
 
 # --- استایل‌های فونت ---
 FONT_STYLES = {
@@ -223,7 +224,7 @@ def get_user(user_id, username=None):
     user = cur.fetchone()
     if not user:
         initial_balance = int(get_setting("initial_balance"))
-        balance = 500000000000 if user_id == OWNER_ID else initial_balance
+        balance = 5000000 if user_id == OWNER_ID else initial_balance
         cur.execute("INSERT INTO users (user_id, username, balance) VALUES (?, ?, ?)", (user_id, username, balance))
         con.commit()
         cur.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
