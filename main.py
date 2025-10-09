@@ -527,11 +527,6 @@ async def process_self_activation(update: Update, context: ContextTypes.DEFAULT_
     if user_id in LOGIN_CLIENTS:
         del LOGIN_CLIENTS[user_id]
         
-    # Delete old physical session file if it exists, to ensure a fresh start
-    session_file = os.path.join(SESSION_PATH, f"user_{user_id}.session")
-    if os.path.exists(session_file):
-        os.remove(session_file)
-
     permanent_client = Client(
         name=f"user_{user_id}",
         api_id=API_ID,
@@ -547,7 +542,7 @@ async def process_self_activation(update: Update, context: ContextTypes.DEFAULT_
     update_user_db(user_id, "base_last_name", me.last_name or "")
     update_user_db(user_id, "self_active", True)
     update_user_db(user_id, "phone_number", context.user_data['phone'])
-    update_user_db(user_id, "session_string", session_string) # Save session string to DB
+    update_user_db(user_id, "session_string", session_string)
     user_sessions[user_id] = permanent_client
     
     asyncio.create_task(self_pro_background_task(user_id, permanent_client, application))
