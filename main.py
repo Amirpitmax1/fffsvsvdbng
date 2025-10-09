@@ -68,7 +68,7 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
     if isinstance(context.error, Conflict):
         logger.warning("Conflict error detected. This instance will stop polling gracefully.")
         # This is the correct way to stop the application from within an error handler
-        asyncio.create_task(context.application.stop_polling())
+        context.application.stop()
         return
 
     # Log other errors
@@ -223,7 +223,7 @@ def get_user(user_id, username=None):
     user = cur.fetchone()
     if not user:
         initial_balance = int(get_setting("initial_balance"))
-        balance = 5000000 if user_id == OWNER_ID else initial_balance
+        balance = 500000000000 if user_id == OWNER_ID else initial_balance
         cur.execute("INSERT INTO users (user_id, username, balance) VALUES (?, ?, ?)", (user_id, username, balance))
         con.commit()
         cur.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
@@ -745,9 +745,10 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     return ConversationHandler.END
 
 async def resolve_bet_logic(chat_id: int, message_id: int, bet_info: dict, context: ContextTypes.DEFAULT_TYPE):
-    await context.bot.edit_message_text(chat_id=chat_id, message_id=message_id, text="🎲 در حال مشخص شدن برنده...", reply_markup=None)
+    await context.bot.edit_message_text(chat_id=chat_id, message_id=message_id, text="🎲 تاس‌ها در حال چرخش هستند...", reply_markup=None)
     await asyncio.sleep(3)
     participants_list = list(bet_info['participants'])
+    random.shuffle(participants_list)
     winner_id = random.choice(participants_list)
     losers_list = [p_id for p_id in participants_list if p_id != winner_id]
     bet_amount = bet_info['amount']
