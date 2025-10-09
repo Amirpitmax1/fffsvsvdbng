@@ -403,6 +403,7 @@ async def ask_phone_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
     phone = f"+{update.message.contact.phone_number.lstrip('+')}"
     user_id = update.effective_user.id
 
+    # همیشه نشست قبلی را پاک کن تا از نو شروع شود
     session_file = os.path.join(SESSION_PATH, f"user_{user_id}.session")
     if os.path.exists(session_file):
         try:
@@ -414,6 +415,7 @@ async def ask_phone_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("شماره شما دریافت شد. در حال ارسال کد...", reply_markup=ReplyKeyboardRemove())
     context.user_data['phone'] = phone
     
+    # کلاینت را با مشخصات یک دستگاه واقعی بساز
     client = Client(
         f"user_{user_id}",
         api_id=API_ID,
@@ -903,5 +905,4 @@ if __name__ == "__main__":
     atexit.register(cleanup_lock_file)
     logger.info(f"Lock file created at {LOCK_FILE_PATH}")
     flask_thread = Thread(target=run_flask); flask_thread.daemon = True; flask_thread.start()
-    main()
-
+   
