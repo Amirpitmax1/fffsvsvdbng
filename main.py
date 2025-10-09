@@ -526,9 +526,7 @@ async def ask_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return ConversationHandler.END
 
     try:
-        # Ensure the client is connected before proceeding
         if not client.is_connected:
-            logger.info(f"Client for {user_id} was not connected. Reconnecting.")
             await client.connect()
 
         logger.info(f"Calling client.sign_in for user {user_id}.")
