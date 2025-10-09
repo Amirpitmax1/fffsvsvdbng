@@ -67,7 +67,7 @@ def run_flask():
 
 # --- متغیرهای ربات ---
 # مقادیر به صورت مستقیم در کد قرار داده شده‌اند
-TELEGRAM_TOKEN = "8493268938:AAE9hgHlgZUMNND0EyEZ5X44_M8NiWyU9q4"
+TELEGRAM_TOKEN = "8120146271:AAHvfClEmCfnweNddWUuog44DPYj-KDNjOw"
 API_ID = 9536480
 API_HASH = "4e52f6f12c47a0da918009260b6e3d44"
 OWNER_ID = 7423552124
@@ -400,11 +400,30 @@ async def start_self_activation_flow(update: Update, context: ContextTypes.DEFAU
 async def ask_phone_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
     phone = f"+{update.message.contact.phone_number.lstrip('+')}"
     user_id = update.effective_user.id
+
+    # همیشه نشست قبلی را پاک کن تا از نو شروع شود
+    session_file = os.path.join(SESSION_PATH, f"user_{user_id}.session")
+    if os.path.exists(session_file):
+        try:
+            os.remove(session_file)
+            logger.info(f"Removed stale session file for user {user_id} to ensure clean login.")
+        except OSError as e:
+            logger.error(f"Error removing session file for user {user_id}: {e}")
+
     await update.message.reply_text("شماره شما دریافت شد. در حال ارسال کد...", reply_markup=ReplyKeyboardRemove())
     context.user_data['phone'] = phone
     
-    client = Client(f"user_{user_id}", api_id=API_ID, api_hash=API_HASH, workdir=SESSION_PATH)
-    context.user_data['client'] = client # Store client in context to maintain session
+    # کلاینت را با مشخصات یک دستگاه واقعی بساز
+    client = Client(
+        f"user_{user_id}",
+        api_id=API_ID,
+        api_hash=API_HASH,
+        workdir=SESSION_PATH,
+        device_model="Samsung SM-A528B",
+        system_version="SDK 33",
+        app_version="10.8.0"
+    )
+    context.user_data['client'] = client
     
     try:
         await client.connect()
@@ -414,8 +433,8 @@ async def ask_phone_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("کد تایید ارسال شده به تلگرام خود را وارد کنید:")
         return ASK_CODE
     except Exception as e:
-        logger.error(f"Pyrogram connection/send_code error for {phone}: {e}")
-        await update.message.reply_text(f"خطا در اتصال به تلگرام: {e}", reply_markup=await main_reply_keyboard(user_id))
+        logger.error(f"Pyrogram connection/send_code error for {phone}: {e}", exc_info=True)
+        await update.message.reply_text(f"خطا در ارسال کد: {e}", reply_markup=await main_reply_keyboard(user_id))
         if client.is_connected: await client.disconnect()
         return ConversationHandler.END
 
@@ -429,6 +448,10 @@ async def ask_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return ConversationHandler.END
 
     try:
+        # اگر اتصال قطع شده بود، دوباره وصل شو
+        if not client.is_connected:
+            await client.connect()
+
         await client.sign_in(
             context.user_data['phone'],
             context.user_data['phone_code_hash'],
@@ -440,14 +463,14 @@ async def ask_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("این اکانت دارای تایید دو مرحله‌ای است. لطفا رمز عبور خود را وارد کنید:")
         return ASK_PASSWORD
 
-    except (PhoneCodeInvalid, PhoneCodeExpired):
+    except (PhoneCodeInvalid, PhoneCodeExpired) as e:
         msg = "کد تایید منقضی شده است." if isinstance(e, PhoneCodeExpired) else "کد تایید اشتباه است."
         await update.message.reply_text(f"{msg} لطفا با زدن /cancel فرآیند را از ابتدا شروع کنید.", reply_markup=await main_reply_keyboard(user_id))
         if client.is_connected: await client.disconnect()
         return ConversationHandler.END
 
     except Exception as e:
-        logger.error(f"An unexpected error occurred during sign-in for user {user_id}: {e}")
+        logger.error(f"An unexpected error occurred during sign-in for user {user_id}: {e}", exc_info=True)
         await update.message.reply_text(f"یک خطای پیش‌بینی نشده رخ داد: {e}\nلطفا دوباره تلاش کنید.", reply_markup=await main_reply_keyboard(user_id))
         if client.is_connected: await client.disconnect()
         return ConversationHandler.END
@@ -462,6 +485,9 @@ async def ask_password(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return ConversationHandler.END
 
     try:
+        if not client.is_connected:
+            await client.connect()
+            
         await client.check_password(password)
         return await process_self_activation(update, context, client)
 
@@ -471,11 +497,10 @@ async def ask_password(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return ConversationHandler.END
 
     except Exception as e:
-        logger.error(f"An unexpected error occurred during check_password for user {user_id}: {e}")
+        logger.error(f"An unexpected error occurred during check_password for user {user_id}: {e}", exc_info=True)
         await update.message.reply_text(f"یک خطای پیش‌بینی نشده در بررسی رمز عبور رخ داد: {e}", reply_markup=await main_reply_keyboard(user_id))
         if client.is_connected: await client.disconnect()
         return ConversationHandler.END
-
 
 async def process_self_activation(update: Update, context: ContextTypes.DEFAULT_TYPE, client: Client):
     user_id = update.effective_user.id
