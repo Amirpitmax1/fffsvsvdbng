@@ -66,6 +66,7 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
     """Handle errors, log them, and gracefully shut down on Conflict."""
     if isinstance(context.error, Conflict):
         logger.warning("Conflict error detected. This instance will stop polling gracefully.")
+        # This is the correct way to stop the application from within an error handler
         context.application.stop()
         return
 
@@ -87,6 +88,7 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
             )
     except Exception as e:
         logger.error(f"Failed to send error notification to owner: {e}")
+
 
 # --- بخش وب سرور برای Ping ---
 web_app = Flask(__name__)
@@ -145,16 +147,19 @@ def setup_database():
             user_id INTEGER PRIMARY KEY, username TEXT, balance INTEGER DEFAULT 0,
             self_active BOOLEAN DEFAULT FALSE, self_paused BOOLEAN DEFAULT FALSE,
             phone_number TEXT, font_style TEXT DEFAULT 'normal', 
-            base_first_name TEXT, base_last_name TEXT,
+            base_first_name TEXT, base_last_name TEXT, session_string TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
     try:
         cur.execute("ALTER TABLE users ADD COLUMN base_last_name TEXT")
         con.commit()
-        logger.info("Added 'base_last_name' column to users table.")
-    except sqlite3.OperationalError:
-        pass
+    except sqlite3.OperationalError: pass
+    try:
+        cur.execute("ALTER TABLE users ADD COLUMN session_string TEXT")
+        con.commit()
+    except sqlite3.OperationalError: pass
+
 
     cur.execute("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)")
     cur.execute("CREATE TABLE IF NOT EXISTS admins (user_id INTEGER PRIMARY KEY)")
@@ -522,6 +527,11 @@ async def process_self_activation(update: Update, context: ContextTypes.DEFAULT_
     if user_id in LOGIN_CLIENTS:
         del LOGIN_CLIENTS[user_id]
         
+    # Delete old physical session file if it exists, to ensure a fresh start
+    session_file = os.path.join(SESSION_PATH, f"user_{user_id}.session")
+    if os.path.exists(session_file):
+        os.remove(session_file)
+
     permanent_client = Client(
         name=f"user_{user_id}",
         api_id=API_ID,
@@ -537,6 +547,7 @@ async def process_self_activation(update: Update, context: ContextTypes.DEFAULT_
     update_user_db(user_id, "base_last_name", me.last_name or "")
     update_user_db(user_id, "self_active", True)
     update_user_db(user_id, "phone_number", context.user_data['phone'])
+    update_user_db(user_id, "session_string", session_string) # Save session string to DB
     user_sessions[user_id] = permanent_client
     
     asyncio.create_task(self_pro_background_task(user_id, permanent_client, application))
@@ -663,6 +674,7 @@ async def delete_self_final(update: Update, context: ContextTypes.DEFAULT_TYPE):
     update_user_db(user_id, 'self_paused', False)
     update_user_db(user_id, 'base_first_name', None)
     update_user_db(user_id, 'base_last_name', None)
+    update_user_db(user_id, 'session_string', None)
 
     await query.answer("سلف شما با موفقیت حذف شد و نام شما بازیابی گردید.")
     await query.edit_message_text("سلف شما حذف شد. نام اصلی شما بازیابی شد.")
@@ -924,11 +936,23 @@ def main() -> None:
     
     application.add_error_handler(error_handler)
 
-    main_menu_pattern = '^💎 موجودی$|^🚀 Self Pro$|^💰 افزایش موجودی$|^🎁 کسب جم رایگان$|^👑 پنل ادمین$|^💬 پشتیبانی$'
-    conv_handler = ConversationHandler(
+    # A non-persistent conversation handler for the login flow
+    login_conv = ConversationHandler(
+        entry_points=[MessageHandler(filters.Regex('^🚀 Self Pro$'), self_pro_menu_text_handler)],
+        states={
+            ASK_PHONE_CONTACT: [MessageHandler(filters.CONTACT, ask_phone_contact)],
+            ASK_CODE: [MessageHandler(filters.TEXT & ~filters.COMMAND, ask_code)],
+            ASK_PASSWORD: [MessageHandler(filters.TEXT & ~filters.COMMAND, ask_password)],
+        },
+        fallbacks=[CommandHandler("cancel", cancel)],
+        persistent=False,
+        name="login_conversation"
+    )
+
+    # The main conversation handler for other features (can be persistent)
+    main_conv = ConversationHandler(
         entry_points=[
             MessageHandler(filters.Regex('^💰 افزایش موجودی$'), buy_diamond_start_text),
-            MessageHandler(filters.Regex('^🚀 Self Pro$'), self_pro_menu_text_handler),
             MessageHandler(filters.Regex('^👑 پنل ادمین$'), admin_panel_entry_text),
             MessageHandler(filters.Regex('^💬 پشتیبانی$'), support_start),
             CallbackQueryHandler(ask_for_reply, pattern=r"^reply_to_")
@@ -936,9 +960,6 @@ def main() -> None:
         states={
             ASK_DIAMOND_AMOUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, ask_diamond_amount)],
             AWAIT_RECEIPT: [MessageHandler(filters.PHOTO, await_receipt)],
-            ASK_PHONE_CONTACT: [MessageHandler(filters.CONTACT, ask_phone_contact)],
-            ASK_CODE: [MessageHandler(filters.TEXT & ~filters.COMMAND, ask_code)],
-            ASK_PASSWORD: [MessageHandler(filters.TEXT & ~filters.COMMAND, ask_password)],
             ADMIN_PANEL_MAIN: [
                 CallbackQueryHandler(ask_for_setting, pattern=r"admin_set_"),
                 CallbackQueryHandler(toggle_channel_lock, pattern=r"^admin_toggle_channel_lock$")
@@ -952,13 +973,14 @@ def main() -> None:
             AWAITING_SUPPORT_MESSAGE: [MessageHandler(filters.TEXT & ~filters.COMMAND, forward_message_to_admin)],
             AWAITING_ADMIN_REPLY: [MessageHandler(filters.TEXT & ~filters.COMMAND, send_reply_to_user)]
         },
-        fallbacks=[MessageHandler(filters.Regex(main_menu_pattern), start), CommandHandler("cancel", cancel)],
+        fallbacks=[CommandHandler("cancel", cancel)],
         allow_reentry=True,
         persistent=True,
         name="main_conversation"
     )
     application.add_handler(CommandHandler("start", start))
-    application.add_handler(conv_handler)
+    application.add_handler(login_conv)
+    application.add_handler(main_conv)
     application.add_handler(CommandHandler("bet", start_bet, filters=filters.ChatType.GROUPS))
     application.add_handler(CallbackQueryHandler(join_bet, pattern=r"^join_bet_"))
     application.add_handler(CallbackQueryHandler(cancel_bet, pattern=r"^cancel_bet_"))
