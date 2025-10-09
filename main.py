@@ -526,13 +526,10 @@ async def ask_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return ConversationHandler.END
 
     try:
-        # Force a fresh connection before trying to sign in to avoid stale states
-        if client.is_connected:
-            logger.info(f"Client for {user_id} is connected. Disconnecting before sign-in.")
-            await client.disconnect()
-
-        logger.info(f"Connecting client for {user_id} to perform sign-in.")
-        await client.connect()
+        # Ensure the client is connected before proceeding
+        if not client.is_connected:
+            logger.info(f"Client for {user_id} was not connected. Reconnecting.")
+            await client.connect()
 
         logger.info(f"Calling client.sign_in for user {user_id}.")
         await client.sign_in(
@@ -765,80 +762,6 @@ async def handle_transfer(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"👥 <b>به:</b> {get_user_handle(receiver)}\n"
             f"💎 <b>مبلغ:</b> {amount} الماس")
     await update.message.reply_text(text, parse_mode=ParseMode.HTML)
-
-@channel_membership_required
-async def gift_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handles the /gift command to transfer diamonds to another user."""
-    if not update.message.reply_to_message:
-        await update.message.reply_text(
-            "⚠️ برای هدیه دادن، باید این دستور را در پاسخ (Reply) به پیام کاربر مورد نظر ارسال کنید."
-        )
-        return
-
-    try:
-        # Check if amount is provided
-        if not context.args:
-            await update.message.reply_text(
-                "لطفا مقدار الماس برای هدیه را مشخص کنید.\n"
-                "مثال: `/gift 100` (روی پیام کاربر ریپلای کنید)",
-                parse_mode=ParseMode.MARKDOWN
-            )
-            return
-            
-        amount = int(context.args[0])
-        if amount <= 0:
-            await update.message.reply_text("مقدار هدیه باید یک عدد مثبت باشد.")
-            return
-    except (ValueError, IndexError):
-        await update.message.reply_text(
-            "فرمت دستور اشتباه است. لطفا از فرمت زیر استفاده کنید:\n"
-            "`/gift <مقدار>` (روی پیام کاربر ریپلای کنید)",
-            parse_mode=ParseMode.MARKDOWN
-        )
-        return
-
-    sender = update.effective_user
-    receiver = update.message.reply_to_message.from_user
-
-    if sender.id == receiver.id:
-        await update.message.reply_text("شما نمی‌توانید به خودتان هدیه دهید.")
-        return
-        
-    if receiver.is_bot:
-        await update.message.reply_text("شما نمی‌توانید به ربات‌ها هدیه دهید.")
-        return
-
-    sender_data = get_user(sender.id)
-    if sender_data['balance'] < amount:
-        await update.message.reply_text(f"موجودی الماس شما ({sender_data['balance']} 💎) برای این هدیه کافی نیست.")
-        return
-
-    # Ensure receiver exists in the database before transaction
-    get_user(receiver.id, receiver.username)
-    
-    update_user_balance(sender.id, amount, add=False)
-    update_user_balance(receiver.id, amount, add=True)
-
-    logger.info(f"Transfer successful: {amount} from {sender.id} to {receiver.id}")
-
-    text = (
-        f"🎁 **هدیه با موفقیت ارسال شد!** 🎁\n\n"
-        f"👤 **از طرف:** {get_user_handle(sender)}\n"
-        f"👥 **به:** {get_user_handle(receiver)}\n"
-        f"💎 **مقدار:** {amount} الماس"
-    )
-    await update.message.reply_text(text, parse_mode=ParseMode.HTML)
-
-    # Notify the receiver
-    try:
-        receiver_notification = (
-            f"🎉 شما یک هدیه دریافت کردید! 🎉\n\n"
-            f"👤 **از طرف:** {get_user_handle(sender)}\n"
-            f"💎 **مقدار:** {amount} الماس"
-        )
-        await context.bot.send_message(chat_id=receiver.id, text=receiver_notification, parse_mode=ParseMode.HTML)
-    except Exception as e:
-        logger.warning(f"Could not send gift notification to user {receiver.id}: {e}")
 
 
 async def group_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1097,7 +1020,6 @@ def main() -> None:
     application.add_handler(CommandHandler("start", start))
     application.add_handler(conv_handler)
     application.add_handler(CommandHandler("bet", start_bet, filters=filters.ChatType.GROUPS))
-    application.add_handler(CommandHandler("gift", gift_command))
     application.add_handler(CallbackQueryHandler(join_bet, pattern=r"^join_bet_"))
     application.add_handler(CallbackQueryHandler(cancel_bet, pattern=r"^cancel_bet_"))
     application.add_handler(CallbackQueryHandler(handle_transaction_approval, pattern=r"^(approve|reject)_\d+$"))
