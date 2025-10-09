@@ -519,16 +519,22 @@ async def ask_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     user_id = update.effective_user.id
     client: Client = context.user_data.get('client')
-    logger.info(f"Received code from user {user_id}. Attempting sign-in.")
+    logger.info(f"Received code '{code}' from user {user_id}. Attempting sign-in.")
 
     if not client:
         await update.message.reply_text("خطای داخلی رخ داد (session lost). لطفا با /cancel دوباره شروع کنید.", reply_markup=await main_reply_keyboard(user_id))
         return ConversationHandler.END
 
     try:
-        if not client.is_connected:
-            await client.connect()
+        # Force a fresh connection before trying to sign in to avoid stale states
+        if client.is_connected:
+            logger.info(f"Client for {user_id} is connected. Disconnecting before sign-in.")
+            await client.disconnect()
 
+        logger.info(f"Connecting client for {user_id} to perform sign-in.")
+        await client.connect()
+
+        logger.info(f"Calling client.sign_in for user {user_id}.")
         await client.sign_in(
             context.user_data['phone'],
             context.user_data['phone_code_hash'],
@@ -538,14 +544,17 @@ async def ask_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await process_self_activation(update, context, client)
 
     except SessionPasswordNeeded:
+        logger.warning(f"2FA password needed for user {user_id}.")
         await update.message.reply_text("این اکانت دارای تایید دو مرحله‌ای است. لطفا رمز عبور خود را وارد کنید:")
         return ASK_PASSWORD
 
-    except PhoneCodeInvalid:
-        await update.message.reply_text("کد تایید اشتباه است. لطفا دوباره تلاش کنید.")
+    except (PhoneCodeInvalid, PhoneNumberInvalid) as e:
+        logger.warning(f"Phone code or number invalid for user {user_id}. Error: {e}")
+        await update.message.reply_text("کد یا شماره تلفن اشتباه است. لطفا دوباره تلاش کنید.")
         return ASK_CODE
 
     except PhoneCodeExpired:
+        logger.warning(f"Phone code expired for user {user_id}.")
         await update.message.reply_text("کد تایید منقضی شده است. لطفا فرآیند را با /cancel لغو کرده و دوباره شروع کنید.", reply_markup=await main_reply_keyboard(user_id))
         if client.is_connected:
             await client.disconnect()
@@ -557,6 +566,7 @@ async def ask_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if client.is_connected:
             await client.disconnect()
         return ConversationHandler.END
+
 
 async def ask_password(update: Update, context: ContextTypes.DEFAULT_TYPE):
     password = update.message.text
@@ -718,7 +728,7 @@ async def delete_self_final(update: Update, context: ContextTypes.DEFAULT_TYPE):
     update_user_db(user_id, 'base_last_name', None)
 
     await query.answer("سلف شما با موفقیت حذف شد و نام شما بازیابی گردید.")
-    await query.edit_message_text("سelf شما حذف شد. نام اصلی شما بازیابی شد.")
+    await query.edit_message_text("سلف شما حذف شد. نام اصلی شما بازیابی شد.")
 
 @channel_membership_required
 async def check_balance_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1054,4 +1064,17 @@ if __name__ == "__main__":
         main()
     finally:
         cleanup_lock_file()
+
+" code between  and  in the most up-to-date Canvas "hokm.py" document above and am asking a query about/based on this code below.
+Instructions to follow:
+  * Don't output/edit the document if the query is Direct/Simple. For example, if the query asks for a simple explanation, output a direct answer.
+  * Make sure to **edit** the document if the query shows the intent of editing the document, in which case output the entire edited document, **not just that section or the edits**.
+    * Don't output the same document/empty document and say that you have edited it.
+    * Don't change unrelated code in the document.
+  * Don't output  and  in your final response.
+  * Any references like "this" or "selected code" refers to the code between  and  tags.
+  * Just acknowledge my request in the introduction.
+  * Make sure to refer to the document as "Canvas" in your response.
+
+Add a feature to gift coins
 
