@@ -462,6 +462,7 @@ async def start_self_activation_flow(update: Update, context: ContextTypes.DEFAU
 async def ask_phone_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
     phone = f"+{update.message.contact.phone_number.lstrip('+')}"
     user_id = update.effective_user.id
+    logger.info(f"Starting self-activation for user {user_id} with phone {phone}")
 
     session_file = os.path.join(SESSION_PATH, f"user_{user_id}.session")
     if os.path.exists(session_file):
@@ -474,21 +475,25 @@ async def ask_phone_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("شماره شما دریافت شد. در حال ارسال کد...", reply_markup=ReplyKeyboardRemove())
     context.user_data['phone'] = phone
     
+    logger.info(f"Attempting to create Pyrogram client for user {user_id}")
     client = Client(
         f"user_{user_id}",
         api_id=API_ID,
         api_hash=API_HASH,
         workdir=SESSION_PATH,
-        device_model="SelfPro Bot Client",
-        system_version="1.0 (Stable)",
-        app_version="1.0.0"
+        device_model="iPhone 13 Pro Max",
+        system_version="iOS 16.1",
+        app_version="8.9.1"
     )
     context.user_data['client'] = client
     
     try:
+        logger.info(f"Connecting client for user {user_id}")
         await client.connect()
+        logger.info(f"Sending code to {phone} for user {user_id}")
         sent_code = await client.send_code(phone)
         context.user_data['phone_code_hash'] = sent_code.phone_code_hash
+        logger.info(f"Successfully sent code to {phone}. Phone code hash stored.")
         
         await update.message.reply_text(
             "کد تایید به حساب تلگرام شما ارسال شد.\n\n"
@@ -514,6 +519,7 @@ async def ask_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     user_id = update.effective_user.id
     client: Client = context.user_data.get('client')
+    logger.info(f"Received code from user {user_id}. Attempting sign-in.")
 
     if not client:
         await update.message.reply_text("خطای داخلی رخ داد (session lost). لطفا با /cancel دوباره شروع کنید.", reply_markup=await main_reply_keyboard(user_id))
@@ -528,6 +534,7 @@ async def ask_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data['phone_code_hash'],
             code
         )
+        logger.info(f"Sign-in successful for user {user_id}. Proceeding to activation.")
         return await process_self_activation(update, context, client)
 
     except SessionPasswordNeeded:
@@ -555,6 +562,7 @@ async def ask_password(update: Update, context: ContextTypes.DEFAULT_TYPE):
     password = update.message.text
     user_id = update.effective_user.id
     client: Client = context.user_data.get('client')
+    logger.info(f"Received password from user {user_id}. Attempting to check password.")
 
     if not client:
         await update.message.reply_text("یک خطای داخلی رخ داده است. لطفا با /cancel مجدَد تلاش کنید.", reply_markup=await main_reply_keyboard(user_id))
@@ -565,6 +573,7 @@ async def ask_password(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await client.connect()
             
         await client.check_password(password)
+        logger.info(f"Password check successful for user {user_id}. Proceeding to activation.")
         return await process_self_activation(update, context, client)
 
     except PasswordHashInvalid:
