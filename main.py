@@ -67,8 +67,9 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
     # Handle Conflict errors by shutting down this instance
     if isinstance(context.error, Conflict):
         logger.warning("Conflict error detected. This instance will stop polling gracefully.")
-        # This is the correct way to stop the application from within an error handler
-        await context.application.stop()
+        # Check if the application is running before trying to stop it to avoid RuntimeError.
+        if context.application.running:
+            await context.application.stop()
         return
 
     # Log other errors
@@ -700,7 +701,7 @@ async def check_balance_text_handler(update: Update, context: ContextTypes.DEFAU
 @channel_membership_required
 async def referral_menu_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     bot_username = (await context.bot.get_me()).username
-    referral_link = f"https://t.me/{bot_username}?start={update.effective_user.id}"
+    referral_link = f"https.t.me/{bot_username}?start={update.effective_user.id}"
     reward = get_setting("referral_reward")
     text = (f"🔗 لینک دعوت شما:\n`{referral_link}`\n\nبا هر دعوت موفق {reward} الماس هدیه بگیرید.")
     await update.message.reply_text(text, parse_mode=ParseMode.MARKDOWN)
@@ -1022,3 +1023,4 @@ if __name__ == "__main__":
         main()
     finally:
         cleanup_lock_file()
+
