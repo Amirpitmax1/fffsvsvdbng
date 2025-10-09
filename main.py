@@ -66,10 +66,16 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
     """Handle errors, log them, and gracefully shut down on Conflict."""
     # Handle Conflict errors by shutting down this instance
     if isinstance(context.error, Conflict):
-        logger.warning("Conflict error detected. This instance will stop polling gracefully.")
+        logger.warning(
+            "Conflict error from Telegram API. This means another instance of the bot is running. "
+            "This instance will now attempt a graceful shutdown."
+        )
         # Check if the application is running before trying to stop it to avoid RuntimeError.
         if context.application.running:
             await context.application.stop()
+            logger.info("Application shutdown initiated due to conflict.")
+        else:
+            logger.warning("Application was already not running. No shutdown action needed.")
         return
 
     # Log other errors
@@ -701,7 +707,7 @@ async def check_balance_text_handler(update: Update, context: ContextTypes.DEFAU
 @channel_membership_required
 async def referral_menu_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     bot_username = (await context.bot.get_me()).username
-    referral_link = f"https.t.me/{bot_username}?start={update.effective_user.id}"
+    referral_link = f"https://t.me/{bot_username}?start={update.effective_user.id}"
     reward = get_setting("referral_reward")
     text = (f"🔗 لینک دعوت شما:\n`{referral_link}`\n\nبا هر دعوت موفق {reward} الماس هدیه بگیرید.")
     await update.message.reply_text(text, parse_mode=ParseMode.MARKDOWN)
