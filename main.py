@@ -63,11 +63,19 @@ logger = logging.getLogger(__name__)
 
 # --- Error Handler ---
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Log the error and send a telegram message to notify the developer."""
+    """Handle errors, log them, and gracefully shut down on Conflict."""
+    # Handle Conflict errors by shutting down this instance
+    if isinstance(context.error, Conflict):
+        logger.warning("Conflict error detected. This instance will shut down gracefully.")
+        # Create a task to shut down the application, as we are inside its loop
+        asyncio.create_task(context.application.shutdown())
+        return
+
+    # Log other errors
     logger.error(f"Exception while handling an update:", exc_info=context.error)
 
     try:
-        # Preparing the error message
+        # Preparing the error message for the owner
         tb_list = traceback.format_exception(None, context.error, context.error.__traceback__)
         tb_string = "".join(tb_list)
         
@@ -986,12 +994,7 @@ def main() -> None:
     application.add_handler(MessageHandler(filters.REPLY & filters.Regex(r'^(انتقال الماس\s*\d+|\d+)$'), handle_transfer))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & filters.ChatType.GROUPS, group_text_handler))
     logger.info("Bot is starting...")
-    
-    try:
-        application.run_polling(drop_pending_updates=True)
-    except Conflict:
-        logger.warning("Conflict detected. Another instance is running. Shutting down this instance.")
-        sys.exit(0) # Graceful exit
+    application.run_polling(drop_pending_updates=True)
 
 def cleanup_lock_file():
     if os.path.exists(LOCK_FILE_PATH):
@@ -999,12 +1002,13 @@ def cleanup_lock_file():
         logger.info("Lock file removed.")
 
 if __name__ == "__main__":
+    # Wait a moment to allow the old process to fully terminate, crucial for Render deploys
     logger.info("Waiting for 2 seconds before acquiring lock...")
     time.sleep(2)
 
     if os.path.exists(LOCK_FILE_PATH):
-        logger.critical(f"Lock file {LOCK_FILE_PATH} exists, another instance is running. Exiting.")
-        sys.exit(1)
+        logger.critical(f"Lock file {LOCK_FILE_PATH} exists, another instance is running. Exiting gracefully.")
+        sys.exit(0)
         
     try:
         with open(LOCK_FILE_PATH, "w") as f:
