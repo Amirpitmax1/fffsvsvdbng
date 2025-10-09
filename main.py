@@ -525,36 +525,52 @@ async def process_self_activation(update: Update, context: ContextTypes.DEFAULT_
     return ConversationHandler.END
 
 async def self_pro_background_task(user_id: int, client: Client):
-    if not client.is_connected:
-        try: await client.start()
-        except Exception as e: logger.error(f"Could not start client for {user_id}: {e}"); return
-    while user_id in user_sessions:
-        user = get_user(user_id)
-        if not user or not user['self_active']: break
-        if not user['self_paused']:
-            hourly_cost = int(get_setting("self_hourly_cost"))
-            if user['balance'] < hourly_cost:
-                update_user_db(user_id, "self_active", False)
-                update_user_db(user_id, "self_paused", False)
-                await client.stop(); del user_sessions[user_id]
-                try: await application.bot.send_message(user_id, "موجودی الماس شما تمام شد و Self Pro غیرفعال گردید.")
-                except Exception: pass
-                break
-            update_user_balance(user_id, hourly_cost, add=False)
+    try:
+        if not client.is_connected:
             try:
-                # Use the stored base_first_name
-                base_name = user['base_first_name']
-                if not base_name: # Fallback for older entries
-                     me = await client.get_me()
-                     base_name = me.first_name
-                     update_user_db(user_id, "base_first_name", base_name)
+                await client.start()
+            except Exception as e:
+                logger.error(f"Could not start client for {user_id}: {e}")
+                return
 
-                now_str = datetime.now().strftime("%H:%M")
-                styled_time = stylize_time(now_str, user['font_style'])
-                await client.update_profile(first_name=f"{base_name} | {styled_time}")
-            except Exception as e: logger.error(f"Failed to update profile for {user_id}: {e}")
-        await asyncio.sleep(60)
-    logger.info(f"Background task for user {user_id} stopped.")
+        while user_id in user_sessions:
+            try:
+                user = get_user(user_id)
+                if not user or not user['self_active']:
+                    break
+                if not user['self_paused']:
+                    hourly_cost = int(get_setting("self_hourly_cost"))
+                    if user['balance'] < hourly_cost:
+                        update_user_db(user_id, "self_active", False)
+                        update_user_db(user_id, "self_paused", False)
+                        await client.stop()
+                        del user_sessions[user_id]
+                        try:
+                            await application.bot.send_message(user_id, "موجودی الماس شما تمام شد و Self Pro غیرفعال گردید.")
+                        except Exception:
+                            pass
+                        break
+                    update_user_balance(user_id, hourly_cost, add=False)
+                    try:
+                        base_name = user['base_first_name']
+                        if not base_name:
+                            me = await client.get_me()
+                            base_name = me.first_name
+                            update_user_db(user_id, "base_first_name", base_name)
+
+                        now_str = datetime.now().strftime("%H:%M")
+                        styled_time = stylize_time(now_str, user['font_style'])
+                        await client.update_profile(first_name=f"{base_name} | {styled_time}")
+                    except Exception as e:
+                        logger.error(f"Failed to update profile for {user_id}: {e}")
+                await asyncio.sleep(60)
+            except Exception as e:
+                logger.error(f"Error inside self_pro_background_task loop for user {user_id}: {e}", exc_info=True)
+                await asyncio.sleep(60)  # prevent fast error loops
+    except Exception as e:
+        logger.error(f"Critical error in self_pro_background_task for user {user_id}: {e}", exc_info=True)
+    finally:
+        logger.info(f"Background task for user {user_id} stopped.")
 
 # --- بقیه توابع ---
 @channel_membership_required
