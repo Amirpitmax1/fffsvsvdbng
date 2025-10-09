@@ -120,8 +120,8 @@ def run_flask():
 # --- متغیرهای ربات ---
 # مقادیر به صورت مستقیم در کد قرار داده شده‌اند
 TELEGRAM_TOKEN = "8442241589:AAFJocrHcrJzKrxqJvU_hWvzAFm2SaEOqvE"
-API_ID = 9536480
-API_HASH = "4e52f6f12c47a0da918009260b6e3d44"
+API_ID = 24218762
+API_HASH = "19695584ae95ea9bc5e1483e15b486a7"
 OWNER_ID = 7423552124
 
 
@@ -524,9 +524,8 @@ async def ask_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     except (PhoneCodeInvalid, PhoneCodeExpired) as e:
         msg = "کد تایید منقضی شده است." if isinstance(e, PhoneCodeExpired) else "کد تایید اشتباه است."
-        await update.message.reply_text(f"{msg} لطفا با زدن /cancel فرآیند را از ابتدا شروع کنید.", reply_markup=await main_reply_keyboard(user_id))
-        if client.is_connected: await client.disconnect()
-        return ConversationHandler.END
+        await update.message.reply_text(f"{msg} لطفا دوباره کد صحیح را وارد کنید یا برای شروع مجدد /cancel را بزنید.")
+        return ASK_CODE # Allow user to re-enter the code
 
     except Exception as e:
         logger.error(f"An unexpected error occurred during sign-in for user {user_id}: {e}", exc_info=True)
@@ -551,9 +550,8 @@ async def ask_password(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await process_self_activation(update, context, client)
 
     except PasswordHashInvalid:
-        await update.message.reply_text("رمز عبور اشتباه است. لطفا با زدن /cancel فرآیند را از ابتدا شروع کنید.", reply_markup=await main_reply_keyboard(user_id))
-        if client.is_connected: await client.disconnect()
-        return ConversationHandler.END
+        await update.message.reply_text("رمز عبور اشتباه است. لطفا دوباره تلاش کنید یا برای لغو /cancel را بزنید.")
+        return ASK_PASSWORD # Allow user to re-enter the password
 
     except Exception as e:
         logger.error(f"An unexpected error occurred during check_password for user {user_id}: {e}", exc_info=True)
