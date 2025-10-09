@@ -64,23 +64,16 @@ logger = logging.getLogger(__name__)
 # --- Error Handler ---
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle errors, log them, and gracefully shut down on Conflict."""
-    # Handle Conflict errors by shutting down this instance
     if isinstance(context.error, Conflict):
         logger.warning("Conflict error detected. This instance will stop polling gracefully.")
-        # This is the correct way to stop the application from within an error handler
         context.application.stop()
         return
 
-    # Log other errors
     logger.error(f"Exception while handling an update:", exc_info=context.error)
-
     try:
-        # Preparing the error message for the owner
         tb_list = traceback.format_exception(None, context.error, context.error.__traceback__)
         tb_string = "".join(tb_list)
-        
         update_str = update.to_dict() if isinstance(update, Update) else str(update)
-        
         message = (
             f"An exception was raised while handling an update\n"
             f"<pre>update = {html.escape(str(update_str))}</pre>\n\n"
@@ -88,20 +81,15 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
             f"<pre>context.user_data = {html.escape(str(context.user_data))}</pre>\n\n"
             f"<pre>{html.escape(tb_string)}</pre>"
         )
-        
-        # Split message into chunks to avoid hitting Telegram's message size limit
         for i in range(0, len(message), 4096):
             await context.bot.send_message(
                 chat_id=OWNER_ID, text=message[i:i+4096], parse_mode=ParseMode.HTML
             )
-            
     except Exception as e:
         logger.error(f"Failed to send error notification to owner: {e}")
 
-
 # --- بخش وب سرور برای Ping ---
 web_app = Flask(__name__)
-
 @web_app.route('/')
 def index():
     return "Bot is running!"
@@ -111,19 +99,16 @@ def run_flask():
     web_app.run(host="0.0.0.0", port=port)
 
 # --- متغیرهای ربات ---
-# مقادیر به صورت مستقیم در کد قرار داده شده‌اند
 TELEGRAM_TOKEN = "7422142910:AAHJvdDSWpsiFRo7WRCEhsVL1oFWooefl5w"
 API_ID = 9536480
 API_HASH = "4e52f6f12c47a0da918009260b6e3d44"
 OWNER_ID = 7423552124
-
 
 # مسیر دیتابیس و فایل قفل در دیسک پایدار Render
 DATA_PATH = os.environ.get("RENDER_DISK_PATH", "data")
 DB_PATH = os.path.join(DATA_PATH, "bot_database.db")
 SESSION_PATH = DATA_PATH
 LOCK_FILE_PATH = os.path.join(DATA_PATH, "bot.lock")
-
 os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
 
 # --- مراحل ConversationHandler ---
@@ -133,9 +118,8 @@ os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
     ADMIN_PANEL_MAIN, SETTING_PRICE, SETTING_INITIAL_BALANCE,
     SETTING_SELF_COST, SETTING_CHANNEL_LINK, SETTING_REFERRAL_REWARD,
     SETTING_PAYMENT_CARD, ADMIN_ADD, ADMIN_REMOVE,
-    AWAITING_SUPPORT_MESSAGE, AWAITING_ADMIN_REPLY,
-    SELECT_FONT # New state for login flow
-) = range(17)
+    AWAITING_SUPPORT_MESSAGE, AWAITING_ADMIN_REPLY
+) = range(16)
 
 # --- استایل‌های فونت ---
 FONT_STYLES = {
@@ -165,13 +149,11 @@ def setup_database():
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
-    # Add base_last_name column if it doesn't exist for backward compatibility
     try:
         cur.execute("ALTER TABLE users ADD COLUMN base_last_name TEXT")
         con.commit()
         logger.info("Added 'base_last_name' column to users table.")
     except sqlite3.OperationalError:
-        # Column already exists
         pass
 
     cur.execute("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)")
@@ -437,18 +419,20 @@ async def handle_transaction_approval(update: Update, context: ContextTypes.DEFA
 
 # --- منطق ورود به سلف (کامل و اصلاح شده) ---
 user_sessions = {}
+LOGIN_CLIENTS = {} # Temporary clients for auth flow
+
 @channel_membership_required
 async def self_pro_menu_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = get_user(update.effective_user.id)
-    if user['self_active']:
-        await update.message.reply_text("⚙️ منوی مدیریت Self Pro:", reply_markup=await self_pro_management_keyboard(update.effective_user.id))
+    user_id = update.effective_user.id
+    user_db = get_user(user_id)
+    if user_db['self_active']:
+        await update.message.reply_text("⚙️ منوی مدیریت Self Pro:", reply_markup=await self_pro_management_keyboard(user_id))
         return ConversationHandler.END
-    return await start_self_activation_flow(update, context)
 
-async def start_self_activation_flow(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if get_user(update.effective_user.id)['balance'] < 10:
+    if get_user(user_id)['balance'] < 10:
         await update.message.reply_text("برای فعال سازی سلف، حداقل باید ۱۰ الماس موجودی داشته باشید.")
         return ConversationHandler.END
+    
     keyboard = [[KeyboardButton("📱 اشتراک‌گذاری شماره تلفن", request_contact=True)]]
     await update.message.reply_text("لطفا برای فعال‌سازی، شماره تلفن خود را به اشتراک بگذارید.", reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=True))
     return ASK_PHONE_CONTACT
@@ -457,116 +441,110 @@ async def ask_phone_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
     phone = f"+{update.message.contact.phone_number.lstrip('+')}"
     user_id = update.effective_user.id
 
-    session_file = os.path.join(SESSION_PATH, f"user_{user_id}.session")
-    if os.path.exists(session_file):
-        try:
-            os.remove(session_file)
-            logger.info(f"Removed stale session file for user {user_id} to ensure clean login.")
-        except OSError as e:
-            logger.error(f"Error removing session file for user {user_id}: {e}")
-
     await update.message.reply_text("شماره شما دریافت شد. در حال ارسال کد...", reply_markup=ReplyKeyboardRemove())
+    
+    client = Client(name=f"auth_{user_id}", api_id=API_ID, api_hash=API_HASH, in_memory=True)
+    LOGIN_CLIENTS[user_id] = client
     context.user_data['phone'] = phone
-    
-    client = Client(
-        f"user_{user_id}",
-        api_id=API_ID,
-        api_hash=API_HASH,
-        workdir=SESSION_PATH,
-        device_model="Samsung SM-A528B",
-        system_version="SDK 33",
-        app_version="10.8.0"
-    )
-    context.user_data['client'] = client
-    
+
     try:
         await client.connect()
         sent_code = await client.send_code(phone)
         context.user_data['phone_code_hash'] = sent_code.phone_code_hash
-        
         await update.message.reply_text("کد تایید ارسال شده به تلگرام خود را وارد کنید:")
         return ASK_CODE
     except Exception as e:
         logger.error(f"Pyrogram connection/send_code error for {phone}: {e}", exc_info=True)
         await update.message.reply_text(f"خطا در ارسال کد: {e}", reply_markup=await main_reply_keyboard(user_id))
-        if client.is_connected: await client.disconnect()
+        if user_id in LOGIN_CLIENTS:
+            if LOGIN_CLIENTS[user_id].is_connected:
+                await LOGIN_CLIENTS[user_id].disconnect()
+            del LOGIN_CLIENTS[user_id]
         return ConversationHandler.END
 
 async def ask_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
     code = update.message.text.strip()
     user_id = update.effective_user.id
-    client: Client = context.user_data.get('client')
+    client = LOGIN_CLIENTS.get(user_id)
 
     if not client:
         await update.message.reply_text("خطای داخلی رخ داد. لطفا دوباره شروع کنید.", reply_markup=await main_reply_keyboard(user_id))
         return ConversationHandler.END
 
     try:
-        if not client.is_connected:
-            await client.connect()
-
-        await client.sign_in(
-            context.user_data['phone'],
-            context.user_data['phone_code_hash'],
-            code
-        )
+        await client.sign_in(context.user_data['phone'], context.user_data['phone_code_hash'], code)
         return await process_self_activation(update, context, client)
-
     except SessionPasswordNeeded:
         await update.message.reply_text("این اکانت دارای تایید دو مرحله‌ای است. لطفا رمز عبور خود را وارد کنید:")
         return ASK_PASSWORD
-
     except (PhoneCodeInvalid, PhoneCodeExpired) as e:
         msg = "کد تایید منقضی شده است." if isinstance(e, PhoneCodeExpired) else "کد تایید اشتباه است."
         await update.message.reply_text(f"{msg} لطفا با زدن /cancel فرآیند را از ابتدا شروع کنید.", reply_markup=await main_reply_keyboard(user_id))
         if client.is_connected: await client.disconnect()
+        del LOGIN_CLIENTS[user_id]
         return ConversationHandler.END
-
     except Exception as e:
-        logger.error(f"An unexpected error occurred during sign-in for user {user_id}: {e}", exc_info=True)
+        logger.error(f"An unexpected error during sign-in for user {user_id}: {e}", exc_info=True)
         await update.message.reply_text(f"یک خطای پیش‌بینی نشده رخ داد: {e}\nلطفا دوباره تلاش کنید.", reply_markup=await main_reply_keyboard(user_id))
         if client.is_connected: await client.disconnect()
+        del LOGIN_CLIENTS[user_id]
         return ConversationHandler.END
 
 async def ask_password(update: Update, context: ContextTypes.DEFAULT_TYPE):
     password = update.message.text
     user_id = update.effective_user.id
-    client: Client = context.user_data.get('client')
+    client = LOGIN_CLIENTS.get(user_id)
 
     if not client:
         await update.message.reply_text("یک خطای داخلی رخ داده است. لطفا با /cancel مجدَد تلاش کنید.", reply_markup=await main_reply_keyboard(user_id))
         return ConversationHandler.END
 
     try:
-        if not client.is_connected:
-            await client.connect()
-            
         await client.check_password(password)
         return await process_self_activation(update, context, client)
-
     except PasswordHashInvalid:
         await update.message.reply_text("رمز عبور اشتباه است. لطفا با زدن /cancel فرآیند را از ابتدا شروع کنید.", reply_markup=await main_reply_keyboard(user_id))
         if client.is_connected: await client.disconnect()
+        del LOGIN_CLIENTS[user_id]
         return ConversationHandler.END
-
     except Exception as e:
-        logger.error(f"An unexpected error occurred during check_password for user {user_id}: {e}", exc_info=True)
+        logger.error(f"An unexpected error during check_password for user {user_id}: {e}", exc_info=True)
         await update.message.reply_text(f"یک خطای پیش‌بینی نشده در بررسی رمز عبور رخ داد: {e}", reply_markup=await main_reply_keyboard(user_id))
         if client.is_connected: await client.disconnect()
+        del LOGIN_CLIENTS[user_id]
         return ConversationHandler.END
 
-async def process_self_activation(update: Update, context: ContextTypes.DEFAULT_TYPE, client: Client):
+async def process_self_activation(update: Update, context: ContextTypes.DEFAULT_TYPE, temp_client: Client):
     user_id = update.effective_user.id
-    me = await client.get_me()
+    
+    session_string = await temp_client.export_session_string()
+    await temp_client.disconnect()
+    if user_id in LOGIN_CLIENTS:
+        del LOGIN_CLIENTS[user_id]
+        
+    permanent_client = Client(
+        name=f"user_{user_id}",
+        api_id=API_ID,
+        api_hash=API_HASH,
+        session_string=session_string,
+        workdir=SESSION_PATH
+    )
+
+    await permanent_client.start()
+    me = await permanent_client.get_me()
+    
     update_user_db(user_id, "base_first_name", me.first_name)
     update_user_db(user_id, "base_last_name", me.last_name or "")
     update_user_db(user_id, "self_active", True)
     update_user_db(user_id, "phone_number", context.user_data['phone'])
-    user_sessions[user_id] = client
-    asyncio.create_task(self_pro_background_task(user_id, client, application))
+    user_sessions[user_id] = permanent_client
+    
+    asyncio.create_task(self_pro_background_task(user_id, permanent_client, application))
     await update.message.reply_text("✅ Self Pro با موفقیت فعال شد!", reply_markup=await main_reply_keyboard(user_id))
+    
     context.user_data.clear()
     return ConversationHandler.END
+
 
 async def self_pro_background_task(user_id: int, client: Client, application: Application):
     try:
@@ -1004,7 +982,6 @@ def cleanup_lock_file():
         logger.info("Lock file removed.")
 
 if __name__ == "__main__":
-    # Wait a moment to allow the old process to fully terminate, crucial for Render deploys
     logger.info("Waiting for 2 seconds before acquiring lock...")
     time.sleep(2)
 
