@@ -116,10 +116,20 @@ def setup_database():
         CREATE TABLE IF NOT EXISTS users (
             user_id INTEGER PRIMARY KEY, username TEXT, balance INTEGER DEFAULT 0,
             self_active BOOLEAN DEFAULT FALSE, self_paused BOOLEAN DEFAULT FALSE,
-            phone_number TEXT, font_style TEXT DEFAULT 'normal', base_first_name TEXT,
+            phone_number TEXT, font_style TEXT DEFAULT 'normal', 
+            base_first_name TEXT, base_last_name TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
+    # Add base_last_name column if it doesn't exist for backward compatibility
+    try:
+        cur.execute("ALTER TABLE users ADD COLUMN base_last_name TEXT")
+        con.commit()
+        logger.info("Added 'base_last_name' column to users table.")
+    except sqlite3.OperationalError:
+        # Column already exists
+        pass
+
     cur.execute("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)")
     cur.execute("CREATE TABLE IF NOT EXISTS admins (user_id INTEGER PRIMARY KEY)")
     cur.execute("""
@@ -403,7 +413,6 @@ async def ask_phone_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
     phone = f"+{update.message.contact.phone_number.lstrip('+')}"
     user_id = update.effective_user.id
 
-    # همیشه نشست قبلی را پاک کن تا از نو شروع شود
     session_file = os.path.join(SESSION_PATH, f"user_{user_id}.session")
     if os.path.exists(session_file):
         try:
@@ -415,7 +424,6 @@ async def ask_phone_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("شماره شما دریافت شد. در حال ارسال کد...", reply_markup=ReplyKeyboardRemove())
     context.user_data['phone'] = phone
     
-    # کلاینت را با مشخصات یک دستگاه واقعی بساز
     client = Client(
         f"user_{user_id}",
         api_id=API_ID,
@@ -507,6 +515,7 @@ async def process_self_activation(update: Update, context: ContextTypes.DEFAULT_
     user_id = update.effective_user.id
     me = await client.get_me()
     update_user_db(user_id, "base_first_name", me.first_name)
+    update_user_db(user_id, "base_last_name", me.last_name or "")
     update_user_db(user_id, "self_active", True)
     update_user_db(user_id, "phone_number", context.user_data['phone'])
     user_sessions[user_id] = client
@@ -533,7 +542,13 @@ async def self_pro_background_task(user_id: int, client: Client):
                 break
             update_user_balance(user_id, hourly_cost, add=False)
             try:
-                base_name = user['base_first_name'] or (await client.get_me()).first_name
+                # Use the stored base_first_name
+                base_name = user['base_first_name']
+                if not base_name: # Fallback for older entries
+                     me = await client.get_me()
+                     base_name = me.first_name
+                     update_user_db(user_id, "base_first_name", base_name)
+
                 now_str = datetime.now().strftime("%H:%M")
                 styled_time = stylize_time(now_str, user['font_style'])
                 await client.update_profile(first_name=f"{base_name} | {styled_time}")
@@ -581,15 +596,41 @@ async def delete_self_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE
 async def delete_self_final(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user_id = query.from_user.id
+    user_data = get_user(user_id)
+    
+    # Restore original name before deleting session
     if user_id in user_sessions:
-        client = user_sessions.pop(user_id)
-        if client.is_connected: await client.stop()
+        client = user_sessions[user_id]
+        try:
+            if not client.is_connected:
+                await client.start()
+            
+            # Restore names only if they exist in the database
+            first_name_to_restore = user_data['base_first_name'] if user_data['base_first_name'] else ""
+            last_name_to_restore = user_data['base_last_name'] if user_data['base_last_name'] else ""
+            
+            await client.update_profile(first_name=first_name_to_restore, last_name=last_name_to_restore)
+            logger.info(f"Successfully restored name for user {user_id}")
+            
+        except Exception as e:
+            logger.error(f"Could not restore name for user {user_id}: {e}")
+        finally:
+            if client.is_connected:
+                await client.stop()
+            user_sessions.pop(user_id, None)
+
+    # Clean up session file and database flags
     session_file = os.path.join(SESSION_PATH, f"user_{user_id}.session")
-    if os.path.exists(session_file): os.remove(session_file)
+    if os.path.exists(session_file):
+        os.remove(session_file)
+        
     update_user_db(user_id, 'self_active', False)
     update_user_db(user_id, 'self_paused', False)
-    await query.answer("سلف شما با موفقیت حذف شد.")
-    await query.edit_message_text("سلف شما حذف شد.")
+    update_user_db(user_id, 'base_first_name', None) # Clear stored names
+    update_user_db(user_id, 'base_last_name', None)
+
+    await query.answer("سلف شما با موفقیت حذف شد و نام شما بازیابی گردید.")
+    await query.edit_message_text("سلف شما حذف شد. نام اصلی شما بازیابی شد.")
 
 @channel_membership_required
 async def check_balance_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -905,4 +946,5 @@ if __name__ == "__main__":
     atexit.register(cleanup_lock_file)
     logger.info(f"Lock file created at {LOCK_FILE_PATH}")
     flask_thread = Thread(target=run_flask); flask_thread.daemon = True; flask_thread.start()
-   
+    main()
+
