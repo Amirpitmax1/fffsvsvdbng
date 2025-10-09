@@ -47,6 +47,8 @@ from pyrogram.errors import (
     ApiIdInvalid,
     PhoneCodeExpired
 )
+from apscheduler.jobstores.base import JobLookupError
+
 
 # تنظیمات لاگ‌گیری برای دیباگ
 logging.basicConfig(
@@ -401,7 +403,6 @@ async def ask_phone_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
     phone = f"+{update.message.contact.phone_number.lstrip('+')}"
     user_id = update.effective_user.id
 
-    # همیشه نشست قبلی را پاک کن تا از نو شروع شود
     session_file = os.path.join(SESSION_PATH, f"user_{user_id}.session")
     if os.path.exists(session_file):
         try:
@@ -413,7 +414,6 @@ async def ask_phone_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("شماره شما دریافت شد. در حال ارسال کد...", reply_markup=ReplyKeyboardRemove())
     context.user_data['phone'] = phone
     
-    # کلاینت را با مشخصات یک دستگاه واقعی بساز
     client = Client(
         f"user_{user_id}",
         api_id=API_ID,
@@ -448,7 +448,6 @@ async def ask_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return ConversationHandler.END
 
     try:
-        # اگر اتصال قطع شده بود، دوباره وصل شو
         if not client.is_connected:
             await client.connect()
 
@@ -671,12 +670,19 @@ async def resolve_bet_logic(chat_id: int, message_id: int, bet_info: dict, conte
 
 async def end_bet_on_timeout(context: ContextTypes.DEFAULT_TYPE):
     job_data = context.job.data
+    chat_id = job_data['chat_id']
+    chat_data = context.application.chat_data.get(chat_id, {})
     bet_info = job_data['bet_info']
+
     for p_id in bet_info['participants']:
         update_user_balance(p_id, bet_info['amount'], add=True)
-        if 'users_in_bet' in context.chat_data:
-            context.chat_data['users_in_bet'].discard(p_id)
-    await context.bot.edit_message_text(chat_id=job_data['chat_id'], message_id=job_data['message_id'], text="⌛️ زمان شرط‌بندی تمام شد و مبلغ به شرکت‌کنندگان بازگردانده شد.")
+        if 'users_in_bet' in chat_data:
+            chat_data['users_in_bet'].discard(p_id)
+            
+    if 'bets' in chat_data:
+        chat_data['bets'].pop(job_data['message_id'], None)
+
+    await context.bot.edit_message_text(chat_id=chat_id, message_id=job_data['message_id'], text="⌛️ زمان شرط‌بندی تمام شد و مبلغ به شرکت‌کنندگان بازگردانده شد.")
 
 @channel_membership_required
 async def start_bet(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -721,7 +727,12 @@ async def join_bet(update: Update, context: ContextTypes.DEFAULT_TYPE):
     bet_info['participants'].add(user.id)
     context.chat_data['users_in_bet'].add(user.id)
     await query.answer("شما به شرط پیوستید! نتیجه بلافاصله اعلام می‌شود...")
-    bet_info['job'].schedule_removal()
+    
+    try:
+        bet_info['job'].schedule_removal()
+    except JobLookupError:
+        logger.warning(f"Job for bet {message_id} already removed or finished.")
+        
     context.chat_data['bets'].pop(message_id, None)
     await resolve_bet_logic(chat_id=update.effective_chat.id, message_id=message_id, bet_info=bet_info, context=context)
 
@@ -733,7 +744,12 @@ async def cancel_bet(update: Update, context: ContextTypes.DEFAULT_TYPE):
     bet_info = bets[message_id]
     if query.from_user.id != bet_info['creator_id']:
         await query.answer("فقط شروع‌کننده می‌تواند شرط را لغو کند.", show_alert=True); return
-    bet_info['job'].schedule_removal()
+    
+    try:
+        bet_info['job'].schedule_removal()
+    except JobLookupError:
+        logger.warning(f"Attempted to cancel an already finished/removed job for bet {message_id}.")
+
     for p_id in bet_info['participants']:
         update_user_balance(p_id, bet_info['amount'], add=True)
         if 'users_in_bet' in context.chat_data:
