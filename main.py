@@ -67,8 +67,8 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
     # Handle Conflict errors by shutting down this instance
     if isinstance(context.error, Conflict):
         logger.warning("Conflict error detected. This instance will stop polling gracefully.")
-        # Gracefully stop the polling loop. The application will then terminate.
-        context.application.stop_polling()
+        # This is the correct way to stop the application from within an error handler
+        asyncio.create_task(context.application.stop_polling())
         return
 
     # Log other errors
