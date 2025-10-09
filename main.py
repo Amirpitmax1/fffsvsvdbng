@@ -106,7 +106,7 @@ def run_flask():
 TELEGRAM_TOKEN = "8120146271:AAHvfClEmCfnweNddWUuog44DPYj-KDNjOw"
 API_ID = 9536480
 API_HASH = "4e52f6f12c47a0da918009260b6e3d44"
-OWNER_ID = 7423552124
+OWNER_ID = 7423552124,7160833208
 
 
 # مسیر دیتابیس و فایل قفل در دیسک پایدار Render
