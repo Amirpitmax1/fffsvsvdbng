@@ -29,6 +29,7 @@ from telegram import (
     User,
     ReplyKeyboardRemove
 )
+from telegram.error import Conflict
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -933,9 +934,7 @@ def main() -> None:
     
     application = Application.builder().token(TELEGRAM_TOKEN).persistence(persistence).build()
     
-    # Add the error handler
     application.add_error_handler(error_handler)
-
 
     main_menu_pattern = '^💎 موجودی$|^🚀 Self Pro$|^💰 افزایش موجودی$|^🎁 کسب جم رایگان$|^👑 پنل ادمین$|^💬 پشتیبانی$'
     conv_handler = ConversationHandler(
@@ -987,7 +986,12 @@ def main() -> None:
     application.add_handler(MessageHandler(filters.REPLY & filters.Regex(r'^(انتقال الماس\s*\d+|\d+)$'), handle_transfer))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & filters.ChatType.GROUPS, group_text_handler))
     logger.info("Bot is starting...")
-    application.run_polling(drop_pending_updates=True)
+    
+    try:
+        application.run_polling(drop_pending_updates=True)
+    except Conflict:
+        logger.warning("Conflict detected. Another instance is running. Shutting down this instance.")
+        sys.exit(0) # Graceful exit
 
 def cleanup_lock_file():
     if os.path.exists(LOCK_FILE_PATH):
@@ -995,7 +999,6 @@ def cleanup_lock_file():
         logger.info("Lock file removed.")
 
 if __name__ == "__main__":
-    # Wait a moment to allow the old process to fully terminate, crucial for Render deploys
     logger.info("Waiting for 2 seconds before acquiring lock...")
     time.sleep(2)
 
