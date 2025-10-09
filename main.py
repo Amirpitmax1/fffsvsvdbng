@@ -136,7 +136,8 @@ def setup_database():
     default_settings = {
         "diamond_price": "500", "initial_balance": "10", "self_hourly_cost": "5",
         "referral_reward": "20", "payment_card": "شماره کارت خود را اینجا وارد کنید",
-        "mandatory_channel": "@YourChannel"
+        "mandatory_channel": "@YourChannel",
+        "mandatory_channel_enabled": "false"
     }
     for key, value in default_settings.items():
         cur.execute("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", (key, value))
@@ -208,6 +209,10 @@ def get_user_handle(user: User):
 def channel_membership_required(func):
     @wraps(func)
     async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE, *args, **kwargs):
+        is_enabled = get_setting("mandatory_channel_enabled")
+        if is_enabled != 'true':
+            return await func(update, context, *args, **kwargs)
+
         user = update.effective_user
         if is_admin(user.id):
             return await func(update, context, *args, **kwargs)
@@ -226,10 +231,16 @@ def channel_membership_required(func):
         except Exception:
             channel_link = f"https://t.me/{channel_id.lstrip('@')}"
             keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("عضویت در کانال", url=channel_link)]])
-            await update.effective_message.reply_text(
-                "برای استفاده از ربات، لطفا ابتدا در کانال ما عضو شوید و سپس دوباره تلاش کنید.",
-                reply_markup=keyboard
-            )
+            if update.effective_message:
+                 await update.effective_message.reply_text(
+                    "برای استفاده از ربات، لطفا ابتدا در کانال ما عضو شوید و سپس دوباره تلاش کنید.",
+                    reply_markup=keyboard
+                )
+            elif update.callback_query:
+                await update.callback_query.message.reply_text(
+                    "برای استفاده از ربات، لطفا ابتدا در کانال ما عضو شوید و سپس دوباره تلاش کنید.",
+                    reply_markup=keyboard
+                )
             return
     return wrapper
 
@@ -247,6 +258,9 @@ async def main_reply_keyboard(user_id):
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
 async def admin_panel_keyboard():
+    is_channel_lock_enabled = get_setting("mandatory_channel_enabled") == 'true'
+    channel_lock_text = "✅ قفل کانال: فعال" if is_channel_lock_enabled else "❌ قفل کانال: غیرفعال"
+    
     keyboard = [
         [InlineKeyboardButton("💎 تنظیم قیمت الماس", callback_data="admin_set_price")],
         [InlineKeyboardButton("💰 تنظیم موجودی اولیه", callback_data="admin_set_initial_balance")],
@@ -254,6 +268,7 @@ async def admin_panel_keyboard():
         [InlineKeyboardButton("🎁 تنظیم پاداش دعوت", callback_data="admin_set_referral_reward")],
         [InlineKeyboardButton("💳 تنظیم شماره کارت", callback_data="admin_set_payment_card")],
         [InlineKeyboardButton("📢 تنظیم کانال اجباری", callback_data="admin_set_channel")],
+        [InlineKeyboardButton(channel_lock_text, callback_data="admin_toggle_channel_lock")],
     ]
     return InlineKeyboardMarkup(keyboard)
 
@@ -387,18 +402,17 @@ async def ask_phone_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     await update.message.reply_text("شماره شما دریافت شد. در حال ارسال کد...", reply_markup=ReplyKeyboardRemove())
     context.user_data['phone'] = phone
+    
+    # Do not store client object in context, create it temporarily
     client = Client(f"user_{user_id}", api_id=API_ID, api_hash=API_HASH, workdir=SESSION_PATH)
-    context.user_data['client'] = client
+    
     try:
         await client.connect()
         sent_code = await client.send_code(phone)
         context.user_data['phone_code_hash'] = sent_code.phone_code_hash
-        await update.message.reply_text(
-            "کد تایید ارسال شده به تلگرام خود را وارد کنید:\n\n"
-            "**⚠️ توجه: فقط عدد کد را تایپ کنید و از فوروارد کردن پیام تلگرام خودداری کنید.**",
-            parse_mode=ParseMode.MARKDOWN
-        )
-        await client.disconnect()
+        await client.disconnect() # Disconnect after sending code
+        
+        await update.message.reply_text("کد تایید ارسال شده به تلگرام خود را وارد کنید:")
         return ASK_CODE
     except Exception as e:
         logger.error(f"Pyrogram connection/send_code error for {phone}: {e}")
@@ -408,72 +422,62 @@ async def ask_phone_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def ask_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
     code = update.message.text.strip()
-    logger.info(f"Attempting to sign in for user {update.effective_user.id} with code.")
-    client: Client = context.user_data.get('client')
-
-    if not client:
-        logger.warning(f"Client object not found in user_data for user {update.effective_user.id}")
-        await update.message.reply_text("یک خطای داخلی رخ داده است. لطفا با /cancel مجدَد تلاش کنید.", reply_markup=await main_reply_keyboard(update.effective_user.id))
-        return ConversationHandler.END
+    user_id = update.effective_user.id
+    
+    # Recreate the client object to ensure a fresh session state
+    client = Client(f"user_{user_id}", api_id=API_ID, api_hash=API_HASH, workdir=SESSION_PATH)
+    context.user_data['client'] = client # Store for potential password step
 
     try:
-        if not client.is_connected:
-            await client.connect()
-        await client.sign_in(context.user_data['phone'], context.user_data['phone_code_hash'], code)
-        logger.info(f"Sign-in successful (pre-2FA) for user {update.effective_user.id}")
+        await client.connect()
+        await client.sign_in(
+            context.user_data['phone'],
+            context.user_data['phone_code_hash'],
+            code
+        )
         return await process_self_activation(update, context, client)
 
     except SessionPasswordNeeded:
-        logger.info(f"2FA password needed for user {update.effective_user.id}")
         await update.message.reply_text("این اکانت دارای تایید دو مرحله‌ای است. لطفا رمز عبور خود را وارد کنید:")
         return ASK_PASSWORD
 
     except PhoneCodeInvalid:
-        logger.warning(f"Invalid phone code provided by user {update.effective_user.id}")
-        await update.message.reply_text("کد تایید اشتباه است. لطفا دوباره کد صحیح را وارد کنید یا برای لغو /cancel را بفرستید.")
+        await update.message.reply_text("کد تایید اشتباه است. لطفا دوباره کد صحیح را وارد کنید.")
+        # Do not disconnect or end conversation, allow user to retry
         return ASK_CODE
 
     except PhoneCodeExpired:
-        logger.warning(f"Phone code expired for user {update.effective_user.id}")
-        await update.message.reply_text("کد تایید منقضی شده است. لطفا فرآیند را از ابتدا شروع کنید.", reply_markup=await main_reply_keyboard(update.effective_user.id))
+        await update.message.reply_text("کد تایید منقضی شده است. لطفا با زدن /cancel فرآیند را از ابتدا شروع کنید.", reply_markup=await main_reply_keyboard(user_id))
         if client.is_connected: await client.disconnect()
-        context.user_data.clear()
         return ConversationHandler.END
 
     except Exception as e:
-        logger.error(f"An unexpected error occurred during sign-in for user {update.effective_user.id}: {e}", exc_info=True)
-        await update.message.reply_text(f"یک خطای پیش‌بینی نشده رخ داد: {e}\nلطفا دوباره تلاش کنید.", reply_markup=await main_reply_keyboard(update.effective_user.id))
+        logger.error(f"An unexpected error occurred during sign-in for user {user_id}: {e}")
+        await update.message.reply_text(f"یک خطای پیش‌بینی نشده رخ داد: {e}\nلطفا دوباره تلاش کنید.", reply_markup=await main_reply_keyboard(user_id))
         if client.is_connected: await client.disconnect()
-        context.user_data.clear()
         return ConversationHandler.END
 
 async def ask_password(update: Update, context: ContextTypes.DEFAULT_TYPE):
     password = update.message.text
-    logger.info(f"Checking 2FA password for user {update.effective_user.id}")
     client: Client = context.user_data.get('client')
 
     if not client:
-        logger.warning(f"Client object not found in user_data for user {update.effective_user.id} at password stage.")
         await update.message.reply_text("یک خطای داخلی رخ داده است. لطفا با /cancel مجدَد تلاش کنید.", reply_markup=await main_reply_keyboard(update.effective_user.id))
         return ConversationHandler.END
 
     try:
-        if not client.is_connected:
-            await client.connect()
         await client.check_password(password)
-        logger.info(f"2FA password correct for user {update.effective_user.id}")
         return await process_self_activation(update, context, client)
 
     except PasswordHashInvalid:
-        logger.warning(f"Invalid 2FA password provided by user {update.effective_user.id}")
-        await update.message.reply_text("رمز عبور اشتباه است. لطفا دوباره رمز صحیح را وارد کنید یا برای لغو /cancel را بفرستید.")
+        await update.message.reply_text("رمز عبور اشتباه است. لطفا دوباره رمز صحیح را وارد کنید.")
+        # Allow user to retry
         return ASK_PASSWORD
 
     except Exception as e:
-        logger.error(f"An unexpected error occurred during check_password for user {update.effective_user.id}: {e}", exc_info=True)
+        logger.error(f"An unexpected error occurred during check_password for user {update.effective_user.id}: {e}")
         await update.message.reply_text(f"یک خطای پیش‌بینی نشده در بررسی رمز عبور رخ داد: {e}", reply_markup=await main_reply_keyboard(update.effective_user.id))
         if client.is_connected: await client.disconnect()
-        context.user_data.clear()
         return ConversationHandler.END
 
 async def process_self_activation(update: Update, context: ContextTypes.DEFAULT_TYPE, client: Client):
@@ -485,6 +489,7 @@ async def process_self_activation(update: Update, context: ContextTypes.DEFAULT_
     user_sessions[user_id] = client
     asyncio.create_task(self_pro_background_task(user_id, client))
     await update.message.reply_text("✅ Self Pro با موفقیت فعال شد!", reply_markup=await main_reply_keyboard(user_id))
+    context.user_data.clear() # Clean up after successful login
     return ConversationHandler.END
 
 async def self_pro_background_task(user_id: int, client: Client):
@@ -732,6 +737,10 @@ async def ask_for_setting(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "admin_set_payment_card": ("payment_card", "💳 شماره کارت جدید را وارد کنید:", SETTING_PAYMENT_CARD),
         "admin_set_channel": ("mandatory_channel", "📢 آیدی کانال اجباری (با @) را وارد کنید:", SETTING_CHANNEL_LINK),
     }
+    
+    if query.data not in setting_map:
+        return ADMIN_PANEL_MAIN
+
     setting_key, prompt, next_state = setting_map[query.data]
     context.user_data["setting_key"] = setting_key
     await query.edit_message_text(prompt); return next_state
@@ -744,6 +753,17 @@ async def receive_setting(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("✅ تنظیمات با موفقیت ذخیره شد.")
     await update.message.reply_text("👑 پنل ادمین:", reply_markup=await admin_panel_keyboard())
     return ADMIN_PANEL_MAIN
+    
+async def toggle_channel_lock(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    current_state = get_setting("mandatory_channel_enabled")
+    new_state = "false" if current_state == "true" else "true"
+    update_setting("mandatory_channel_enabled", new_state)
+    status_text = "فعال" if new_state == "true" else "غیرفعال"
+    await query.answer(f"قفل کانال با موفقیت {status_text} شد.")
+    await query.edit_message_reply_markup(reply_markup=await admin_panel_keyboard())
+
 
 @channel_membership_required
 async def support_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -796,7 +816,10 @@ def main() -> None:
             ASK_PHONE_CONTACT: [MessageHandler(filters.CONTACT, ask_phone_contact)],
             ASK_CODE: [MessageHandler(filters.TEXT & ~filters.COMMAND, ask_code)],
             ASK_PASSWORD: [MessageHandler(filters.TEXT & ~filters.COMMAND, ask_password)],
-            ADMIN_PANEL_MAIN: [CallbackQueryHandler(ask_for_setting, pattern=r"admin_set_")],
+            ADMIN_PANEL_MAIN: [
+                CallbackQueryHandler(ask_for_setting, pattern=r"admin_set_"),
+                CallbackQueryHandler(toggle_channel_lock, pattern=r"^admin_toggle_channel_lock$")
+            ],
             SETTING_PRICE: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_setting)],
             SETTING_INITIAL_BALANCE: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_setting)],
             SETTING_SELF_COST: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_setting)],
@@ -835,8 +858,9 @@ def cleanup_lock_file():
 
 if __name__ == "__main__":
     if os.path.exists(LOCK_FILE_PATH):
-        logger.critical("Lock file exists. Another instance might be running. Shutting down.")
-        sys.exit(1)
+        logger.warning("Lock file exists. Another instance might be running or crashed. Removing stale lock file.")
+        cleanup_lock_file()
+        
     with open(LOCK_FILE_PATH, "w") as f: f.write(str(os.getpid()))
     atexit.register(cleanup_lock_file)
     logger.info(f"Lock file created at {LOCK_FILE_PATH}")
