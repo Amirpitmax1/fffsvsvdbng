@@ -479,9 +479,9 @@ async def ask_phone_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
         api_id=API_ID,
         api_hash=API_HASH,
         workdir=SESSION_PATH,
-        device_model="Samsung SM-A528B",
-        system_version="SDK 33",
-        app_version="10.8.0"
+        device_model="SelfPro Bot Client",
+        system_version="1.0 (Stable)",
+        app_version="1.0.0"
     )
     context.user_data['client'] = client
     
