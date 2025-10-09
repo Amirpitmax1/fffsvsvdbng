@@ -119,7 +119,7 @@ def run_flask():
 
 # --- متغیرهای ربات ---
 # مقادیر به صورت مستقیم در کد قرار داده شده‌اند
-TELEGRAM_TOKEN = "8109554964:AAGiWWjueTtyCkHrjR95IqtFH7bNKobcIns"
+TELEGRAM_TOKEN = "8021027640:AAHkDFkRxQHostznePHF3MrVjjRcGijbz14"
 API_ID = 24218762
 API_HASH = "19695584ae95ea9bc5e1483e15b486a7"
 OWNER_ID = 7423552124
