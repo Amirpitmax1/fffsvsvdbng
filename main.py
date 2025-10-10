@@ -483,22 +483,30 @@ async def ask_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not client:
         await update.message.reply_text("خطای داخلی رخ داد. لطفا دوباره شروع کنید.", reply_markup=await main_reply_keyboard(user_id))
         return ConversationHandler.END
+    
+    # اطمینان از اتصال قبل از sign_in
+    if not client.is_connected:
+        try: await client.connect()
+        except Exception as e:
+            logger.error(f"Failed to reconnect client for {user_id} in ask_code: {e}", exc_info=True)
+            await client.disconnect() # برای اطمینان از پاکسازی
+            del LOGIN_CLIENTS[user_id]
+            error_message = f"❌ دلیل ناموفق بودن ورود: قطع اتصال موقت.\n\nجزئیات فنی: <code>{type(e).__name__}: {e}</code>"
+            await update.message.reply_text(error_message, parse_mode=ParseMode.HTML, reply_markup=await main_reply_keyboard(user_id))
+            return ConversationHandler.END
 
     try:
         await client.sign_in(context.user_data['phone'], context.user_data['phone_code_hash'], code)
         return await process_self_activation(update, context, client)
     except SessionPasswordNeeded:
+        # در صورت نیاز به رمز، client در LOGIN_CLIENTS باقی می‌ماند.
         await update.message.reply_text("این اکانت دارای تایید دو مرحله‌ای است. لطفا رمز عبور خود را وارد کنید:")
         return ASK_PASSWORD
     except (PhoneCodeInvalid, PhoneCodeExpired) as e:
         msg = "کد تایید منقضی شده است." if isinstance(e, PhoneCodeExpired) else "کد تایید اشتباه است."
         error_message = f"❌ دلیل ناموفق بودن ورود: {msg}\n\nلطفا با زدن /cancel فرآیند را از ابتدا شروع کنید."
         
-        # --- اصلاحیه برای قطع اتصال در این بلوک ---
-        if client.is_connected: 
-            await client.disconnect() 
-        # --- پایان اصلاحیه ---
-        
+        if client.is_connected: await client.disconnect() 
         await update.message.reply_text(error_message, reply_markup=await main_reply_keyboard(user_id))
         del LOGIN_CLIENTS[user_id]
         return ConversationHandler.END
@@ -506,11 +514,8 @@ async def ask_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"An unexpected error during sign-in for user {user_id}: {e}", exc_info=True)
         error_message = f"❌ دلیل ناموفق بودن ورود: خطای ناشناخته در مرحله تایید کد.\n\nجزئیات فنی: <code>{type(e).__name__}: {e}</code>"
         
-        # --- اصلاحیه برای قطع اتصال در این بلوک ---
-        if client.is_connected: 
-            await client.disconnect()
-        # --- پایان اصلاحیه ---
-        
+        # --- اصلاحیه: قطع اتصال کلاینت در خطا ---
+        if client.is_connected: await client.disconnect()
         await update.message.reply_text(error_message, parse_mode=ParseMode.HTML, reply_markup=await main_reply_keyboard(user_id))
         del LOGIN_CLIENTS[user_id]
         return ConversationHandler.END
@@ -524,17 +529,26 @@ async def ask_password(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("یک خطای داخلی رخ داده است. لطفا با /cancel مجدَد تلاش کنید.", reply_markup=await main_reply_keyboard(user_id))
         return ConversationHandler.END
 
+    # اطمینان از اتصال قبل از check_password
+    if not client.is_connected:
+        try: await client.connect()
+        except Exception as e:
+            logger.error(f"Failed to reconnect client for {user_id} in ask_password: {e}", exc_info=True)
+            await client.disconnect()
+            del LOGIN_CLIENTS[user_id]
+            error_message = f"❌ دلیل ناموفق بودن ورود: قطع اتصال موقت.\n\nجزئیات فنی: <code>{type(e).__name__}: {e}</code>"
+            await update.message.reply_text(error_message, parse_mode=ParseMode.HTML, reply_markup=await main_reply_keyboard(user_id))
+            return ConversationHandler.END
+            
     try:
         await client.check_password(password)
+        # در صورت موفقیت، به مرحله فعالسازی بروید
         return await process_self_activation(update, context, client)
     except PasswordHashInvalid:
         error_message = f"❌ دلیل ناموفق بودن ورود: رمز عبور تأیید دو مرحله‌ای اشتباه است.\n\nلطفا با زدن /cancel فرآیند را از ابتدا شروع کنید."
         
-        # --- اصلاحیه برای قطع اتصال در این بلوک ---
-        if client.is_connected: 
-            await client.disconnect()
-        # --- پایان اصلاحیه ---
-        
+        # --- اصلاحیه: قطع اتصال کلاینت در خطا ---
+        if client.is_connected: await client.disconnect()
         await update.message.reply_text(error_message, reply_markup=await main_reply_keyboard(user_id))
         del LOGIN_CLIENTS[user_id]
         return ConversationHandler.END
@@ -542,11 +556,8 @@ async def ask_password(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"An unexpected error during check_password for user {user_id}: {e}", exc_info=True)
         error_message = f"❌ دلیل ناموفق بودن ورود: خطای ناشناخته در مرحله تایید رمز عبور.\n\nجزئیات فنی: <code>{type(e).__name__}: {e}</code>"
         
-        # --- اصلاحیه برای قطع اتصال در این بلوک ---
-        if client.is_connected: 
-            await client.disconnect()
-        # --- پایان اصلاحیه ---
-        
+        # --- اصلاحیه: قطع اتصال کلاینت در خطا ---
+        if client.is_connected: await client.disconnect()
         await update.message.reply_text(error_message, parse_mode=ParseMode.HTML, reply_markup=await main_reply_keyboard(user_id))
         del LOGIN_CLIENTS[user_id]
         return ConversationHandler.END
@@ -555,6 +566,7 @@ async def process_self_activation(update: Update, context: ContextTypes.DEFAULT_
     user_id = update.effective_user.id
     
     session_string = await temp_client.export_session_string()
+    # کلاینت موقت بعد از استخراج سشن استرینگ قطع می شود (مطابق منطق وب)
     await temp_client.disconnect()
     if user_id in LOGIN_CLIENTS:
         del LOGIN_CLIENTS[user_id]
@@ -756,10 +768,18 @@ async def group_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
         else: await update.message.reply_text("فرمت صحیح: شرطبندی <مبلغ>")
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    if 'client' in context.user_data:
-        client = context.user_data.pop('client')
-        if client.is_connected:
-            await client.disconnect()
+    # --- منطق تمیز کردن کلاینت Pyrogram در صورت وجود ---
+    user_id = update.effective_user.id
+    client = LOGIN_CLIENTS.get(user_id)
+    if client:
+        try:
+            if client.is_connected:
+                await client.disconnect()
+        except Exception as e:
+            logger.error(f"Error disconnecting client in /cancel for {user_id}: {e}")
+        finally:
+            LOGIN_CLIENTS.pop(user_id, None)
+            
     context.user_data.clear()
     await update.message.reply_text("عملیات قبلی لغو شد.", reply_markup=await main_reply_keyboard(update.effective_user.id))
     return ConversationHandler.END
