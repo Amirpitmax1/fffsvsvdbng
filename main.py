@@ -63,31 +63,37 @@ logger = logging.getLogger(__name__)
 
 # --- Error Handler ---
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle errors, log them, and gracefully shut down on Conflict."""
+    """Handle errors, log them, and gracefully shut down on Conflict.
+    خطاهای فنی فقط در کنسول ثبت می شوند و برای OWNER_ID ارسال نمی گردند."""
     if isinstance(context.error, Conflict):
         logger.warning("Conflict error detected. This instance will stop polling gracefully.")
         # This is the correct way to stop the application from within an error handler
         context.application.stop()
         return
 
+    # لاگ کامل خطا در کنسول (محیط رندر) باقی می ماند
     logger.error(f"Exception while handling an update:", exc_info=context.error)
-    try:
-        tb_list = traceback.format_exception(None, context.error, context.error.__traceback__)
-        tb_string = "".join(tb_list)
-        update_str = update.to_dict() if isinstance(update, Update) else str(update)
-        message = (
-            f"An exception was raised while handling an update\n"
-            f"<pre>update = {html.escape(str(update_str))}</pre>\n\n"
-            f"<pre>context.chat_data = {html.escape(str(context.chat_data))}</pre>\n\n"
-            f"<pre>context.user_data = {html.escape(str(context.user_data))}</pre>\n\n"
-            f"<pre>{html.escape(tb_string)}</pre>"
-        )
-        for i in range(0, len(message), 4096):
-            await context.bot.send_message(
-                chat_id=OWNER_ID, text=message[i:i+4096], parse_mode=ParseMode.HTML
-            )
-    except Exception as e:
-        logger.error(f"Failed to send error notification to owner: {e}")
+    
+    # --- حذف بلاک ارسال خطا به تلگرام ---
+    # try:
+    #     tb_list = traceback.format_exception(None, context.error, context.error.__traceback__)
+    #     tb_string = "".join(tb_list)
+    #     update_str = update.to_dict() if isinstance(update, Update) else str(update)
+    #     message = (
+    #         f"An exception was raised while handling an update\n"
+    #         f"<pre>update = {html.escape(str(update_str))}</pre>\n\n"
+    #         f"<pre>context.chat_data = {html.escape(str(context.chat_data))}</pre>\n\n"
+    #         f"<pre>context.user_data = {html.escape(str(context.user_data))}</pre>\n\n"
+    #         f"<pre>{html.escape(tb_string)}</pre>"
+    #     )
+    #     for i in range(0, len(message), 4096):
+    #         await context.bot.send_message(
+    #             chat_id=OWNER_ID, text=message[i:i+4096], parse_mode=ParseMode.HTML
+    #         )
+    # except Exception as e:
+    #     logger.error(f"Failed to send error notification to owner: {e}")
+    # --- پایان حذف بلاک ---
+    
 
 
 # --- بخش وب سرور برای Ping ---
@@ -217,7 +223,8 @@ def get_user(user_id, username=None):
         cur.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
         user = cur.fetchone()
     elif username and user['username'] != username:
-        cur.execute("UPDATE users SET username = ? WHERE user_id = ?", (username, user.id))
+        # <--- اصلاح شد: به جای user.id که یک sqlite3.Row بود، از user_id استفاده شد
+        cur.execute("UPDATE users SET username = ? WHERE user_id = ?", (username, user_id))
         con.commit()
     con.close()
     return user
@@ -1018,7 +1025,7 @@ def main() -> None:
     application.add_handler(MessageHandler(filters.REPLY & filters.Regex(r'^(انتقال الماس\s*\d+|\d+)$'), handle_transfer))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & filters.ChatType.GROUPS, group_text_handler))
     logger.info("Bot is starting...")
-    # ---> تغییر اعمال شده در این خط <---
+    # ---> اصلاح شد: پارامتر غیرمجاز close_bot_methods حذف شد <---
     application.run_polling(drop_pending_updates=True)
 
 def cleanup_lock_file():
