@@ -102,8 +102,8 @@ def run_flask():
 
 # --- متغیرهای ربات ---
 TELEGRAM_TOKEN = "7422142910:AAHJvdDSWpsiFRo7WRCEhsVL1oFWooefl5w"
-API_ID = 9536480
-API_HASH = "4e52f6f12c47a0da918009260b6e3d44"
+API_ID = 29645784  # <--- به روز رسانی شد
+API_HASH = "19e8465032deba8145d40fc4beb91744"  # <--- به روز رسانی شد
 OWNER_ID = 7423552124
 
 # مسیر دیتابیس و فایل قفل در دیسک پایدار Render
@@ -125,7 +125,7 @@ os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
 
 # --- استایل‌های فونت ---
 FONT_STYLES = {
-    'normal': "0123456789", 'monospace': "𝟶𝟷𝟸𝟹𝟺𝟻𝟼𝟽𝟾𝟿",
+    'normal': "0123456789", 'monospace': "🟶🟷🟸🟹🟺🟻🟼🟽🟾🟿",
     'doublestruck': "𝟘𝟙𝚠𝟛𝟜𝟝𝟞𝟟𝟠𝟡", 'stylized': "𝟢𝟣𝟤𝟥𝟦𝟧𝟨𝟩𝟪𝟫",
     'cursive': "𝟎𝟏𝟐𝟑𝟒𝟓𝟔𝟕𝟖𝟗"
 }
@@ -460,7 +460,8 @@ async def ask_phone_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return ASK_CODE
     except Exception as e:
         logger.error(f"Pyrogram connection/send_code error for {phone}: {e}", exc_info=True)
-        await update.message.reply_text(f"خطا در ارسال کد: {e}", reply_markup=await main_reply_keyboard(user_id))
+        error_message = f"❌ دلیل ناموفق بودن ورود: خطای فنی در ارسال کد.\n\nجزئیات: <code>{type(e).__name__}: {e}</code>"
+        await update.message.reply_text(error_message, parse_mode=ParseMode.HTML, reply_markup=await main_reply_keyboard(user_id))
         if user_id in LOGIN_CLIENTS:
             if LOGIN_CLIENTS[user_id].is_connected:
                 await LOGIN_CLIENTS[user_id].disconnect()
@@ -484,14 +485,26 @@ async def ask_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return ASK_PASSWORD
     except (PhoneCodeInvalid, PhoneCodeExpired) as e:
         msg = "کد تایید منقضی شده است." if isinstance(e, PhoneCodeExpired) else "کد تایید اشتباه است."
-        await update.message.reply_text(f"{msg} لطفا با زدن /cancel فرآیند را از ابتدا شروع کنید.", reply_markup=await main_reply_keyboard(user_id))
-        if client.is_connected: await client.disconnect()
+        error_message = f"❌ دلیل ناموفق بودن ورود: {msg}\n\nلطفا با زدن /cancel فرآیند را از ابتدا شروع کنید."
+        
+        # --- اصلاحیه برای قطع اتصال در این بلوک ---
+        if client.is_connected: 
+            await client.disconnect() 
+        # --- پایان اصلاحیه ---
+        
+        await update.message.reply_text(error_message, reply_markup=await main_reply_keyboard(user_id))
         del LOGIN_CLIENTS[user_id]
         return ConversationHandler.END
     except Exception as e:
         logger.error(f"An unexpected error during sign-in for user {user_id}: {e}", exc_info=True)
-        await update.message.reply_text(f"یک خطای پیش‌بینی نشده رخ داد: {e}\nلطفا دوباره تلاش کنید.", reply_markup=await main_reply_keyboard(user_id))
-        if client.is_connected: await client.disconnect()
+        error_message = f"❌ دلیل ناموفق بودن ورود: خطای ناشناخته در مرحله تایید کد.\n\nجزئیات فنی: <code>{type(e).__name__}: {e}</code>"
+        
+        # --- اصلاحیه برای قطع اتصال در این بلوک ---
+        if client.is_connected: 
+            await client.disconnect()
+        # --- پایان اصلاحیه ---
+        
+        await update.message.reply_text(error_message, parse_mode=ParseMode.HTML, reply_markup=await main_reply_keyboard(user_id))
         del LOGIN_CLIENTS[user_id]
         return ConversationHandler.END
 
@@ -508,14 +521,26 @@ async def ask_password(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await client.check_password(password)
         return await process_self_activation(update, context, client)
     except PasswordHashInvalid:
-        await update.message.reply_text("رمز عبور اشتباه است. لطفا با زدن /cancel فرآیند را از ابتدا شروع کنید.", reply_markup=await main_reply_keyboard(user_id))
-        if client.is_connected: await client.disconnect()
+        error_message = f"❌ دلیل ناموفق بودن ورود: رمز عبور تأیید دو مرحله‌ای اشتباه است.\n\nلطفا با زدن /cancel فرآیند را از ابتدا شروع کنید."
+        
+        # --- اصلاحیه برای قطع اتصال در این بلوک ---
+        if client.is_connected: 
+            await client.disconnect()
+        # --- پایان اصلاحیه ---
+        
+        await update.message.reply_text(error_message, reply_markup=await main_reply_keyboard(user_id))
         del LOGIN_CLIENTS[user_id]
         return ConversationHandler.END
     except Exception as e:
         logger.error(f"An unexpected error during check_password for user {user_id}: {e}", exc_info=True)
-        await update.message.reply_text(f"یک خطای پیش‌بینی نشده در بررسی رمز عبور رخ داد: {e}", reply_markup=await main_reply_keyboard(user_id))
-        if client.is_connected: await client.disconnect()
+        error_message = f"❌ دلیل ناموفق بودن ورود: خطای ناشناخته در مرحله تایید رمز عبور.\n\nجزئیات فنی: <code>{type(e).__name__}: {e}</code>"
+        
+        # --- اصلاحیه برای قطع اتصال در این بلوک ---
+        if client.is_connected: 
+            await client.disconnect()
+        # --- پایان اصلاحیه ---
+        
+        await update.message.reply_text(error_message, parse_mode=ParseMode.HTML, reply_markup=await main_reply_keyboard(user_id))
         del LOGIN_CLIENTS[user_id]
         return ConversationHandler.END
 
@@ -993,7 +1018,8 @@ def main() -> None:
     application.add_handler(MessageHandler(filters.REPLY & filters.Regex(r'^(انتقال الماس\s*\d+|\d+)$'), handle_transfer))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & filters.ChatType.GROUPS, group_text_handler))
     logger.info("Bot is starting...")
-    application.run_polling(drop_pending_updates=True)
+    # ---> تغییر اعمال شده در این خط <---
+    application.run_polling(drop_pending_updates=True, close_bot_methods=['deleteWebhook'])
 
 def cleanup_lock_file():
     if os.path.exists(LOCK_FILE_PATH):
