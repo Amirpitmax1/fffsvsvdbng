@@ -1019,7 +1019,7 @@ def main() -> None:
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & filters.ChatType.GROUPS, group_text_handler))
     logger.info("Bot is starting...")
     # ---> تغییر اعمال شده در این خط <---
-    application.run_polling(drop_pending_updates=True, close_bot_methods=['deleteWebhook'])
+    application.run_polling(drop_pending_updates=True)
 
 def cleanup_lock_file():
     if os.path.exists(LOCK_FILE_PATH):
