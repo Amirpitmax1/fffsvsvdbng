@@ -132,7 +132,7 @@ os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
 # --- استایل‌های فونت ---
 FONT_STYLES = {
     'normal': "0123456789", 'monospace': "🟶🟷🟸🟹🟺🟻🟼🟽🟾🟿",
-    'doublestruck': "𝟘𝟙𝚠𝟛𝟜𝟝𝟞𝟟𝟠𝟡", 'stylized': "𝟢𝟣𝟤𝟥𝟦𝟧𝟨𝟩𝟪𝟫",
+    'doublestruck': "𝟘𝟙𚼉𝟛𝟜𝟝𝟞𝟟𝟠𝟡", 'stylized': "𝟢𝟣𝟤𝟥𝟦𝟧𝟨𝟩𝟪𝟫",
     'cursive': "𝟎𝟏𝟐𝟑𝟒𝟓𝟔𝟕𝟖𝟗"
 }
 
@@ -460,6 +460,8 @@ async def ask_phone_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['phone'] = phone
 
     try:
+        # ---> اضافه شد: تاخیر برای برقراری اتصال پایدار <---
+        await asyncio.sleep(1)
         await client.connect()
         sent_code = await client.send_code(phone)
         context.user_data['phone_code_hash'] = sent_code.phone_code_hash
