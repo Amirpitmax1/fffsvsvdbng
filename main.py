@@ -126,7 +126,7 @@ os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
 # --- استایل‌های فونت ---
 FONT_STYLES = {
     'normal': "0123456789", 'monospace': "𝟶𝟷𝟸𝟹𝟺𝟻𝟼𝟽𝟾𝟿",
-    'doublestruck': "𝟘𝟙𝟚𝟛𝟜𝟝𝟞𝟟𝟠𝟡", 'stylized': "𝟢𝟣𝟤𝟥𝟦𝟧𝟨𝟩𝟪𝟫",
+    'doublestruck': "𝟘𝟙𝚠𝟛𝟜𝟝𝟞𝟟𝟠𝟡", 'stylized': "𝟢𝟣𝟤𝟥𝟦𝟧𝟨𝟩𝟪𝟫",
     'cursive': "𝟎𝟏𝟐𝟑𝟒𝟓𝟔𝟕𝟖𝟗"
 }
 
@@ -217,7 +217,7 @@ def get_user(user_id, username=None):
         cur.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
         user = cur.fetchone()
     elif username and user['username'] != username:
-        cur.execute("UPDATE users SET username = ? WHERE user_id = ?", (username, user_id))
+        cur.execute("UPDATE users SET username = ? WHERE user_id = ?", (username, user.id))
         con.commit()
     con.close()
     return user
@@ -532,7 +532,8 @@ async def process_self_activation(update: Update, context: ContextTypes.DEFAULT_
         api_id=API_ID,
         api_hash=API_HASH,
         session_string=session_string,
-        workdir=SESSION_PATH
+        # توجه: پارامتر workdir که باعث ذخیره‌سازی فایل سشن روی دیسک می‌شد، حذف شد.
+        in_memory=True # تضمین می‌کند که کلاینت دائمی نیز چیزی روی دیسک ذخیره نکند
     )
 
     await permanent_client.start()
@@ -661,6 +662,7 @@ async def delete_self_final(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await client.stop()
             user_sessions.pop(user_id, None)
 
+    # حذف فایل سشن در صورت وجود، هرچند با in_memory دیگر نباید فایلی وجود داشته باشد.
     session_file = os.path.join(SESSION_PATH, f"user_{user_id}.session")
     if os.path.exists(session_file):
         os.remove(session_file)
@@ -1018,4 +1020,3 @@ if __name__ == "__main__":
         main()
     finally:
         cleanup_lock_file()
-
